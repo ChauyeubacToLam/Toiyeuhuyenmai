@@ -11,6 +11,9 @@ GREY_DARK = QColor("#666a6f")
 GREEN = QColor("#45b649")
 YELLOW = QColor("#ffd21f")
 ORANGE = QColor("#ff9d22")
+VIOLET = QColor("#7C5CFC")          # nonlinear (phi tuyến tính) signature
+VIOLET_DARK = QColor("#5B3FD1")
+TEAL = QColor("#00A6A6")
 
 
 def icon(name: str, size: int = 24) -> QIcon:
@@ -122,6 +125,10 @@ def _paint_icon(p: QPainter, name: str, s: int) -> None:
         _exit(p)
     elif name == "x":
         _x_mark(p)
+    elif name in {"nonlinear", "nl-data", "xgboost", "shap", "symbolic",
+                  "sensitivity", "optimize", "report", "run-nl", "reset-nl",
+                  "effects", "deps"}:
+        _nonlinear_icon(p, name)
     else:
         _square_symbol(p, True)
 
@@ -536,3 +543,212 @@ def _export_web(p: QPainter) -> None:
 
 def _export_r(p: QPainter) -> None:
     _rounded_glyph(p, QColor("#2569b6"), "R")
+
+
+# --------------------------------------------------------------------------- #
+# Nonlinear (phi tuyến tính) icon family — violet signature
+# --------------------------------------------------------------------------- #
+def _nonlinear_icon(p: QPainter, name: str) -> None:
+    if name == "nonlinear":
+        _nl_curve(p)
+    elif name == "nl-data":
+        _nl_data(p)
+    elif name == "xgboost":
+        _nl_xgboost(p)
+    elif name == "shap":
+        _nl_shap(p)
+    elif name == "symbolic":
+        _nl_symbolic(p)
+    elif name == "sensitivity":
+        _nl_sensitivity(p)
+    elif name == "optimize":
+        _nl_optimize(p)
+    elif name == "report":
+        _nl_report(p)
+    elif name == "run-nl":
+        _nl_run(p)
+    elif name == "reset-nl":
+        _nl_reset(p)
+    elif name == "effects":
+        _nl_effects(p)
+    elif name == "deps":
+        _nl_deps(p)
+
+
+def _nl_axes(p: QPainter) -> None:
+    p.setPen(_pen(QColor("#B8BFCC"), 1.4))
+    p.drawLine(QPointF(4, 4), QPointF(4, 20))
+    p.drawLine(QPointF(4, 20), QPointF(20, 20))
+
+
+def _nl_curve(p: QPainter) -> None:
+    from PySide6.QtGui import QPainterPath
+    _nl_axes(p)
+    path = QPainterPath()
+    path.moveTo(5, 18.5)
+    path.cubicTo(10, 18.5, 11, 6.5, 19, 5.5)
+    p.setPen(QPen(VIOLET, 2.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    p.setBrush(Qt.NoBrush)
+    p.drawPath(path)
+    p.setBrush(VIOLET)
+    p.setPen(Qt.NoPen)
+    p.drawEllipse(QPointF(19, 5.5), 2.2, 2.2)
+
+
+def _nl_data(p: QPainter) -> None:
+    p.setPen(_pen(QColor("#9aa3b2"), 1))
+    p.setBrush(QColor("#ffffff"))
+    p.drawRoundedRect(QRectF(3, 4, 18, 16), 2, 2)
+    p.setBrush(QColor("#EEF0F6"))
+    p.drawRect(QRectF(3, 4, 18, 4))
+    p.setPen(_pen(QColor("#c4cbd8"), 0.8))
+    for y in (12, 16):
+        p.drawLine(QPointF(3, y), QPointF(21, y))
+    p.drawLine(QPointF(9, 4), QPointF(9, 20))
+    # Highlighted target (Y) column in accent.
+    p.setPen(Qt.NoPen)
+    p.setBrush(VIOLET)
+    p.drawRect(QRectF(15, 8, 6, 12))
+    p.setBrush(QColor("#ffffff"))
+
+
+def _nl_xgboost(p: QPainter) -> None:
+    # Boosted decision trees: a small ensemble of triangular trees + boost spark.
+    p.setPen(_pen(VIOLET_DARK, 1.3))
+    p.setBrush(VIOLET)
+    # root + two children (left tree)
+    p.drawLine(QPointF(8, 7), QPointF(5, 13))
+    p.drawLine(QPointF(8, 7), QPointF(11, 13))
+    p.drawLine(QPointF(5, 13), QPointF(11, 13))
+    for x, y in ((8, 6.2), (5, 14), (11, 14)):
+        p.drawEllipse(QPointF(x, y), 2.0, 2.0)
+    # second faded tree behind/right
+    p.setPen(_pen(QColor("#B9A8FF"), 1.2))
+    p.setBrush(QColor("#CFC2FF"))
+    p.drawLine(QPointF(16, 11), QPointF(14, 16))
+    p.drawLine(QPointF(16, 11), QPointF(18, 16))
+    for x, y in ((16, 10.4), (14, 17), (18, 17)):
+        p.drawEllipse(QPointF(x, y), 1.7, 1.7)
+    # boost spark
+    p.setPen(Qt.NoPen)
+    p.setBrush(YELLOW)
+    p.drawPolygon(QPolygonF([QPointF(19, 3), QPointF(16.5, 8), QPointF(18.5, 8),
+                             QPointF(17, 12), QPointF(21, 6), QPointF(19, 6)]))
+
+
+def _nl_shap(p: QPainter) -> None:
+    # Beeswarm: a vertical axis with scattered red/blue dots.
+    p.setPen(_pen(QColor("#B8BFCC"), 1.4))
+    p.drawLine(QPointF(12, 3), QPointF(12, 21))
+    import math
+    dots = [
+        (8, 6, BLUE), (15, 7, QColor("#E0556F")), (10, 8.5, BLUE), (14, 9.5, QColor("#E0556F")),
+        (7, 11, BLUE), (16, 11.5, QColor("#E0556F")), (9.5, 13, BLUE), (13.5, 13.5, QColor("#E0556F")),
+        (8.5, 15.5, BLUE), (15.5, 16, QColor("#E0556F")), (11, 18, BLUE), (13, 18.5, QColor("#E0556F")),
+    ]
+    p.setPen(Qt.NoPen)
+    for x, y, color in dots:
+        p.setBrush(color)
+        p.drawEllipse(QPointF(x, y), 1.5, 1.5)
+
+
+def _nl_symbolic(p: QPainter) -> None:
+    from PySide6.QtGui import QFont
+    p.setPen(Qt.NoPen)
+    p.setBrush(VIOLET)
+    p.drawRoundedRect(QRectF(2.5, 4, 19, 16), 4, 4)
+    font = QFont("Segoe UI", 9)
+    font.setBold(True)
+    font.setItalic(True)
+    p.setFont(font)
+    p.setPen(_pen(QColor("#ffffff"), 1))
+    p.drawText(QRectF(2.5, 3.4, 19, 16), Qt.AlignCenter, "ƒ(x)")
+
+
+def _nl_sensitivity(p: QPainter) -> None:
+    import math
+    # Gauge: arc + ticks + needle.
+    p.setPen(QPen(QColor("#C4CBD8"), 2.2, Qt.SolidLine, Qt.RoundCap))
+    p.setBrush(Qt.NoBrush)
+    p.drawArc(QRectF(3, 5, 18, 18), 20 * 16, 140 * 16)
+    p.setPen(QPen(VIOLET, 2.2, Qt.SolidLine, Qt.RoundCap))
+    p.drawArc(QRectF(3, 5, 18, 18), 110 * 16, 50 * 16)
+    # needle
+    p.setPen(QPen(VIOLET_DARK, 2.0, Qt.SolidLine, Qt.RoundCap))
+    cx, cy = 12, 14.5
+    angle = math.radians(150)
+    p.drawLine(QPointF(cx, cy), QPointF(cx + math.cos(angle) * 7, cy - math.sin(angle) * 7))
+    p.setPen(Qt.NoPen)
+    p.setBrush(VIOLET_DARK)
+    p.drawEllipse(QPointF(cx, cy), 2.0, 2.0)
+
+
+def _nl_optimize(p: QPainter) -> None:
+    # Target rings + center dot + rising arrow.
+    p.setPen(QPen(VIOLET, 1.8))
+    p.setBrush(Qt.NoBrush)
+    p.drawEllipse(QPointF(11, 13), 8, 8)
+    p.drawEllipse(QPointF(11, 13), 4.6, 4.6)
+    p.setPen(Qt.NoPen)
+    p.setBrush(VIOLET)
+    p.drawEllipse(QPointF(11, 13), 1.8, 1.8)
+    # rising arrow to the optimum
+    p.setPen(QPen(QColor("#E0556F"), 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    p.drawLine(QPointF(11, 13), QPointF(20, 4))
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor("#E0556F"))
+    p.drawPolygon(QPolygonF([QPointF(20.5, 3.5), QPointF(15.5, 4.5), QPointF(19.5, 8.5)]))
+
+
+def _nl_report(p: QPainter) -> None:
+    p.setPen(_pen(QColor("#9aa3b2"), 1))
+    p.setBrush(QColor("#ffffff"))
+    p.drawRoundedRect(QRectF(4, 3, 16, 18), 2, 2)
+    p.setBrush(VIOLET)
+    p.setPen(Qt.NoPen)
+    p.drawRect(QRectF(4, 3, 16, 4))
+    p.setPen(Qt.NoPen)
+    for x, h, color in ((7.5, 5, VIOLET), (11, 8, QColor("#B9A8FF")), (14.5, 6.5, BLUE)):
+        p.setBrush(color)
+        p.drawRoundedRect(QRectF(x, 17 - h, 2.6, h), 0.8, 0.8)
+
+
+def _nl_run(p: QPainter) -> None:
+    p.setPen(Qt.NoPen)
+    p.setBrush(VIOLET)
+    p.drawEllipse(QRectF(2, 2, 20, 20))
+    p.setBrush(QColor("#ffffff"))
+    p.drawPolygon(QPolygonF([QPointF(9.5, 7.5), QPointF(17, 12), QPointF(9.5, 16.5)]))
+
+
+def _nl_reset(p: QPainter) -> None:
+    p.setPen(QPen(VIOLET, 2.0, Qt.SolidLine, Qt.RoundCap))
+    p.setBrush(Qt.NoBrush)
+    p.drawArc(QRectF(4, 4, 16, 16), 40 * 16, 280 * 16)
+    p.setBrush(VIOLET)
+    p.setPen(Qt.NoPen)
+    p.drawPolygon(QPolygonF([QPointF(18, 3), QPointF(20, 9), QPointF(14.5, 7.5)]))
+
+
+def _nl_effects(p: QPainter) -> None:
+    # Two overlapping rings (interaction/moderation) with a small spark at overlap.
+    p.setPen(_pen(QColor("#6f7882"), 1.6))
+    p.setBrush(Qt.NoBrush)
+    p.drawEllipse(QRectF(3, 7, 12, 12))
+    p.drawEllipse(QRectF(9, 7, 12, 12))
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor("#f6a623"))
+    p.drawEllipse(QPointF(12, 13), 2.0, 2.0)
+
+
+def _nl_deps(p: QPainter) -> None:
+    # A package/box with a check — dependency status.
+    p.setPen(_pen(VIOLET_DARK, 1.2))
+    p.setBrush(QColor("#EDE9FF"))
+    p.drawPolygon(QPolygonF([QPointF(12, 3), QPointF(20, 7), QPointF(12, 11), QPointF(4, 7)]))
+    p.setBrush(QColor("#D8CEFF"))
+    p.drawPolygon(QPolygonF([QPointF(4, 7), QPointF(12, 11), QPointF(12, 21), QPointF(4, 17)]))
+    p.setBrush(QColor("#C7B9FF"))
+    p.drawPolygon(QPolygonF([QPointF(20, 7), QPointF(12, 11), QPointF(12, 21), QPointF(20, 17)]))
+    p.setPen(QPen(QColor("#1d7244"), 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    p.drawPolyline(QPolygonF([QPointF(14, 15.5), QPointF(15.6, 17.2), QPointF(18.5, 13.5)]))

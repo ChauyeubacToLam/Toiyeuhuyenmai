@@ -254,7 +254,7 @@ def main():
         if not app_icon.isNull():
             window.setWindowIcon(app_icon)
         windows["main"] = window
-        window.show()
+        window.showMaximized()
 
     intro = IntroWindow(LOGO_PATH, INTRO_IMAGE_PATH)
     intro.finished.connect(show_main_window)

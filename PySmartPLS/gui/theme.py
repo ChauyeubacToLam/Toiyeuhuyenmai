@@ -147,6 +147,26 @@ PALETTES: dict[str, dict] = {
 }
 
 
+# Second accent (violet) — the "Phi tuyến tính" (Nonlinear ML) identity. Added to
+# every palette so theme-switching never breaks; mirrors the violet used by the
+# nonlinear icons (gui/icons.py VIOLET) and engine charts (core/nonlinear_engine).
+_ACCENT2 = {
+    #            base       hover      pressed    soft       softer
+    "classic": ("#7C5CFC", "#8E72FD", "#6A47E8", "#ECE7FF", "#F6F3FF"),
+    "light": ("#7C5CFC", "#8E72FD", "#6A47E8", "#ECE7FF", "#F6F3FF"),
+    "dark": ("#9B85F5", "#AD9BF7", "#876FE6", "#2A2347", "#211C33"),
+    "colorblind": ("#5D3FD3", "#6E52DC", "#4E33B8", "#E6E0FA", "#F2EFFB"),
+    "pink": ("#9333EA", "#A24EEE", "#7E27CC", "#F3E8FD", "#FAF4FE"),
+}
+for _name, _pal in PALETTES.items():
+    _a2, _a2_hover, _a2_pressed, _a2_soft, _a2_softer = _ACCENT2.get(_name, _ACCENT2["classic"])
+    _pal.setdefault("accent2", _a2)
+    _pal.setdefault("accent2_hover", _a2_hover)
+    _pal.setdefault("accent2_pressed", _a2_pressed)
+    _pal.setdefault("accent2_soft", _a2_soft)
+    _pal.setdefault("accent2_softer", _a2_softer)
+
+
 def palette(theme: str) -> dict:
     return PALETTES.get(theme, PALETTES[DEFAULT_THEME])
 
@@ -273,11 +293,11 @@ def build_stylesheet(theme: str = DEFAULT_THEME) -> str:
 
     /* ---------- main toolbar ---------- */
     QToolBar#MainToolbar {{ background: {c['surface']};
-        border-bottom: 1px solid {c['border']}; spacing: 3px; padding: 6px 10px; }}
-    QToolBar#MainToolbar::separator {{ background: {c['divider']}; width: 1px; margin: 8px 6px; }}
+        border-bottom: 1px solid {c['border']}; spacing: 2px; padding: 6px 8px; }}
+    QToolBar#MainToolbar::separator {{ background: {c['divider']}; width: 1px; margin: 10px 5px; }}
     QToolBar#MainToolbar QToolButton {{ background: transparent; color: {c['subtext']};
         border: 1px solid transparent; border-radius: 9px;
-        min-width: 64px; min-height: 46px; padding: 4px 6px; font-size: 8.4pt; }}
+        min-width: 50px; min-height: 46px; padding: 4px 4px; font-size: 8.2pt; }}
     QToolBar#MainToolbar QToolButton:hover {{ background: {c['surface_alt']};
         color: {c['text']}; border-color: {c['border']}; }}
     QToolBar#MainToolbar QToolButton:pressed {{ background: {c['accent_soft']}; }}
@@ -550,4 +570,153 @@ def build_stylesheet(theme: str = DEFAULT_THEME) -> str:
     QMessageBox QLabel, QInputDialog QLabel {{ color: {c['text']}; font-size: 9.8pt; }}
     QMessageBox QPushButton, QInputDialog QPushButton {{ min-width: 94px; }}
     QFileDialog {{ background: {c['surface']}; }}
+
+    /* ===================================================================== */
+    /* Toolbar split — two captioned halves (PLS-SEM | Phi tuyến tính)        */
+    /* ===================================================================== */
+    QLabel#ToolbarCaption {{ color: {c['muted']}; font-size: 7.4pt; font-weight: 800;
+        letter-spacing: 1.1px; padding: 0 6px 0 5px; background: transparent; }}
+    QLabel#ToolbarCaptionML {{ color: {c['accent2']}; font-size: 7.4pt; font-weight: 800;
+        letter-spacing: 1.1px; padding: 0 6px 0 7px; background: transparent; }}
+    QFrame#ToolbarSeam {{ background: {c['border_strong']}; min-width: 2px; max-width: 2px;
+        margin: 9px 8px; border-radius: 1px; }}
+    QToolBar#MainToolbar QToolButton#PrimaryToolAction {{ background: {c['accent_softer']};
+        border: 1px solid {c['accent_soft']}; color: {c['accent']}; font-weight: 700; }}
+    QToolBar#MainToolbar QToolButton#PrimaryToolAction:hover {{ background: {c['accent']};
+        color: {c['on_accent']}; border-color: {c['accent']}; }}
+    QToolBar#MainToolbar QToolButton#PrimaryToolActionML {{ background: {c['accent2_softer']};
+        border: 1px solid {c['accent2_soft']}; color: {c['accent2']}; font-weight: 700; }}
+    QToolBar#MainToolbar QToolButton#PrimaryToolActionML:hover {{ background: {c['accent2']};
+        color: #FFFFFF; border-color: {c['accent2']}; }}
+    QToolBar#MainToolbar QToolButton[mlSide="true"]:hover {{ background: {c['accent2_softer']};
+        color: {c['accent2']}; border-color: {c['accent2_soft']}; }}
+    QToolBar#MainToolbar QToolButton[mlSide="true"]:checked {{ background: {c['accent2_soft']};
+        color: {c['accent2']}; border-color: {c['accent2']}; }}
+    QToolBar#MainToolbar QToolButton::menu-indicator {{ image: none; width: 0; }}
+
+    /* ===================================================================== */
+    /* Nonlinear ML workspace                                                */
+    /* ===================================================================== */
+    QWidget#NonlinearWorkspace {{ background: {c['bg']}; }}
+    QFrame#NLNavRail {{ background: {c['surface']}; border: 1px solid {c['border']};
+        border-radius: 16px; }}
+    QLabel#NLBrandTitle {{ color: {c['text']}; font-size: 12.5pt; font-weight: 800;
+        letter-spacing: -0.2px; }}
+    QLabel#NLBrandSub {{ color: {c['muted']}; font-size: 8pt; font-weight: 600;
+        letter-spacing: 0.2px; }}
+    QLabel#NLBrandChip {{ background: {c['accent2_soft']}; border-radius: 13px; }}
+    QToolButton#NLNavItem {{ background: transparent; color: {c['subtext']}; border: 0;
+        border-radius: 10px; padding: 9px 12px; text-align: left; font-size: 9.6pt;
+        font-weight: 600; }}
+    QToolButton#NLNavItem:hover {{ background: {c['surface_alt']}; color: {c['text']}; }}
+    QToolButton#NLNavItem:checked {{ background: {c['accent2_soft']}; color: {c['accent2']};
+        font-weight: 700; }}
+    QToolButton#NLNavItem:disabled {{ color: {c['muted']}; }}
+    QToolButton#NLNavSection {{ color: {c['muted']}; font-size: 7.6pt; font-weight: 800;
+        letter-spacing: 1.2px; background: transparent; border: 0; padding: 2px 12px; }}
+
+    QFrame#NLStageHeader {{ background: {c['surface']}; border: 1px solid {c['border']};
+        border-radius: 16px; }}
+    QLabel#NLKicker {{ color: {c['accent2']}; font-size: 8pt; font-weight: 800;
+        letter-spacing: 1.4px; }}
+    QLabel#NLStageTitle {{ color: {c['text']}; font-size: 16.5pt; font-weight: 800;
+        letter-spacing: -0.4px; }}
+    QLabel#NLStageSub {{ color: {c['subtext']}; font-size: 9.6pt; }}
+
+    QFrame#NLCard {{ background: {c['surface']}; border: 1px solid {c['border']};
+        border-radius: 14px; }}
+    QFrame#NLConfigPanel {{ background: transparent; border: 0; }}
+    QLabel#NLCardTitle {{ color: {c['text']}; font-size: 10.5pt; font-weight: 700;
+        letter-spacing: -0.1px; }}
+    QFrame#NLSectionTick {{ background: {c['accent2']}; border-radius: 2px; }}
+    QLabel#NLSectionDesc {{ color: {c['subtext']}; font-size: 8.8pt; }}
+    QLabel#NLFieldLabel {{ color: {c['subtext']}; font-size: 9.1pt; font-weight: 600; }}
+    QLabel#NLFieldHint {{ color: {c['muted']}; font-size: 8.4pt; }}
+    QFrame#NLRunFooter {{ background: {c['surface']}; border: 1px solid {c['border']};
+        border-radius: 14px; }}
+
+    /* Stat cards */
+    QFrame#StatCard {{ background: {c['surface']}; border: 1px solid {c['border']};
+        border-radius: 14px; }}
+    QFrame#StatCard[tone="good"] {{ border: 1px solid {c['success']}; background: {c['success_soft']}; }}
+    QFrame#StatCard[tone="warn"] {{ border: 1px solid {c['warning']}; background: {c['warning_soft']}; }}
+    QFrame#StatCard[tone="bad"] {{ border: 1px solid {c['danger']}; background: {c['danger_soft']}; }}
+    QFrame#StatCard[tone="accent"] {{ border: 1px solid {c['accent2']}; background: {c['accent2_softer']}; }}
+    QLabel#StatCaption {{ color: {c['muted']}; font-size: 8.3pt; font-weight: 700; letter-spacing: 0.3px; }}
+    QLabel#StatValue {{ color: {c['text']}; font-size: 16.5pt; font-weight: 800; letter-spacing: -0.4px; }}
+    QLabel#StatFoot {{ color: {c['subtext']}; font-size: 8.4pt; }}
+
+    /* Metric chips */
+    QLabel#MetricChip {{ background: {c['accent2_soft']}; color: {c['accent2']};
+        border-radius: 10px; padding: 3px 11px; font-size: 8.4pt; font-weight: 700; }}
+    QLabel#MetricChip[tone="good"] {{ background: {c['success_soft']}; color: {c['success']}; }}
+    QLabel#MetricChip[tone="warn"] {{ background: {c['warning_soft']}; color: {c['warning']}; }}
+    QLabel#MetricChip[tone="bad"] {{ background: {c['danger_soft']}; color: {c['danger']}; }}
+    QLabel#MetricChip[tone="muted"] {{ background: {c['surface_alt']}; color: {c['muted']}; }}
+    QLabel#MetricChip[tone="info"] {{ background: {c['accent_soft']}; color: {c['accent']}; }}
+
+    /* Equation hero card */
+    QFrame#EquationCard {{ background: {c['accent2_softer']}; border: 1px solid {c['accent2_soft']};
+        border-left: 3px solid {c['accent2']}; border-radius: 14px; }}
+    QLabel#EquationText {{ font-family: {MONO_FAMILY}; font-size: 13pt; color: {c['text']}; }}
+
+    /* Chart card (holds a rendered PNG) */
+    QFrame#ChartCard {{ background: {c['surface']}; border: 1px solid {c['border']};
+        border-radius: 14px; }}
+    QLabel#ChartTitle {{ color: {c['text']}; font-size: 10pt; font-weight: 700; }}
+    QLabel#ChartImage {{ background: #FFFFFF; border-radius: 10px; }}
+
+    /* Empty / dependency states */
+    QLabel#NLEmptyTitle {{ color: {c['subtext']}; font-size: 12.5pt; font-weight: 700; }}
+    QLabel#NLEmptyBody {{ color: {c['muted']}; font-size: 9.6pt; }}
+    QLabel#NLEmptyChip {{ background: {c['accent2_soft']}; border-radius: 22px; }}
+    QFrame#DepCard {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 14px; }}
+    QFrame#DepCard[missing="true"] {{ border: 1px dashed {c['border_strong']}; background: {c['surface_sunken']}; }}
+    QLabel#DepName {{ color: {c['text']}; font-size: 10.5pt; font-weight: 700; }}
+    QLabel#DepPurpose {{ color: {c['subtext']}; font-size: 8.6pt; }}
+
+    /* Nonlinear primary CTA — violet identity, used in the run footer */
+    QPushButton#NLPrimaryButton {{ background: {c['accent2']}; color: #FFFFFF;
+        border: 1px solid {c['accent2']}; border-radius: 11px;
+        padding: 11px 22px; font-weight: 700; font-size: 10pt; }}
+    QPushButton#NLPrimaryButton:hover {{ background: {c['accent2_hover']};
+        border-color: {c['accent2_hover']}; }}
+    QPushButton#NLPrimaryButton:pressed {{ background: {c['accent2_pressed']};
+        border-color: {c['accent2_pressed']}; }}
+    QPushButton#NLPrimaryButton:disabled {{ background: {c['muted']};
+        border-color: {c['muted']}; color: {c['surface']}; }}
+
+    /* Secondary / neutral action button */
+    QPushButton#NLSecondaryButton {{ background: {c['surface_alt']}; color: {c['text']};
+        border: 1px solid {c['border']}; border-radius: 10px;
+        padding: 9px 16px; font-weight: 600; text-align: left; }}
+    QPushButton#NLSecondaryButton:hover {{ background: {c['accent2_soft']};
+        border-color: {c['accent2_soft']}; color: {c['accent2']}; }}
+    QPushButton#NLSecondaryButton:pressed {{ background: {c['accent2_softer']}; }}
+    QPushButton#NLSecondaryButton[accent="true"] {{ background: {c['accent2_softer']};
+        border: 1px solid {c['accent2_soft']}; color: {c['accent2']}; font-weight: 700; }}
+    QPushButton#NLSecondaryButton[accent="true"]:hover {{ background: {c['accent2_soft']}; }}
+
+    /* Small inline text actions (Chọn tất cả / Bỏ chọn) */
+    QToolButton#NLLinkButton {{ background: transparent; border: 0; color: {c['accent2']};
+        font-size: 8.7pt; font-weight: 700; padding: 3px 8px; border-radius: 7px; }}
+    QToolButton#NLLinkButton:hover {{ background: {c['accent2_soft']}; }}
+
+    /* Fits / inline hint text (was a full-width pill) */
+    QLabel#NLInlineHint {{ color: {c['subtext']}; font-size: 8.7pt; font-weight: 600; }}
+
+    /* Stage intro / explainer panel — fills the results pane before a run */
+    QFrame#NLIntroCard {{ background: {c['surface']}; border: 1px solid {c['border']};
+        border-radius: 18px; }}
+    QLabel#NLIntroChip {{ background: {c['accent2_soft']}; border-radius: 17px; }}
+    QLabel#NLIntroTitle {{ color: {c['text']}; font-size: 15pt; font-weight: 800;
+        letter-spacing: -0.3px; }}
+    QLabel#NLIntroDesc {{ color: {c['subtext']}; font-size: 10pt; }}
+    QLabel#NLIntroOutLabel {{ color: {c['accent2']}; font-size: 7.8pt; font-weight: 800;
+        letter-spacing: 1.2px; }}
+    QLabel#NLIntroOut {{ color: {c['text']}; font-size: 9.7pt; }}
+    QFrame#NLIntroDot {{ background: {c['accent2']}; border-radius: 3px; }}
+    QLabel#NLIntroCta {{ color: {c['muted']}; font-size: 9pt; }}
+    QFrame#NLIntroCtaBar {{ background: {c['accent2_softer']};
+        border: 1px solid {c['accent2_soft']}; border-radius: 11px; }}
     """

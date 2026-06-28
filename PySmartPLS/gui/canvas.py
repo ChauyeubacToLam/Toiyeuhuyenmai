@@ -778,52 +778,63 @@ class ModelCanvasScene(QGraphicsScene):
         return {"nodes": nodes, "connections": connections}
 
     def load_model(self, model: dict[str, Any]) -> None:
-        self.clear()
-        self.result_badges = []
-        node_map: dict[str, BaseNode] = {}
-        for node_data in model.get("nodes", []):
-            node_type = node_data.get("type")
-            if node_type == "latent":
-                node = LatentNode(
-                    node_data.get("name", "LV"),
-                    float(node_data.get("x", 0)) + 52,
-                    float(node_data.get("y", 0)) + 52,
-                    mode=node_data.get("mode", "reflective"),
-                    node_id=node_data.get("id"),
-                )
-                node.indicator_weighting = node_data.get("weighting", "automatic")
-                node.custom_color = node_data.get("color") or None
-                node.effect_type = node_data.get("effect_type", "") or ""
-                node.effect_refs = dict(node_data.get("effect_refs", {}) or {})
-            elif node_type == "indicator":
-                node = IndicatorNode(
-                    node_data.get("name", "Indicator"),
-                    float(node_data.get("x", 0)) + 56,
-                    float(node_data.get("y", 0)) + 18,
-                    node_id=node_data.get("id"),
-                )
-            elif node_type == "comment":
-                node = CommentNode(
-                    node_data.get("name", "Note"),
-                    float(node_data.get("x", 0)),
-                    float(node_data.get("y", 0)),
-                    node_id=node_data.get("id"),
-                )
-            else:
-                continue
-            node_map[node.node_id] = node
-            self.addItem(node)
+        views = self.views()
+        for view in views:
+            view.setUpdatesEnabled(False)
+        previous_signal_state = self.blockSignals(True)
+        try:
+            self.clear()
+            self.result_badges = []
+            node_map: dict[str, BaseNode] = {}
+            for node_data in model.get("nodes", []):
+                node_type = node_data.get("type")
+                if node_type == "latent":
+                    node = LatentNode(
+                        node_data.get("name", "LV"),
+                        float(node_data.get("x", 0)) + 52,
+                        float(node_data.get("y", 0)) + 52,
+                        mode=node_data.get("mode", "reflective"),
+                        node_id=node_data.get("id"),
+                    )
+                    node.indicator_weighting = node_data.get("weighting", "automatic")
+                    node.custom_color = node_data.get("color") or None
+                    node.effect_type = node_data.get("effect_type", "") or ""
+                    node.effect_refs = dict(node_data.get("effect_refs", {}) or {})
+                elif node_type == "indicator":
+                    node = IndicatorNode(
+                        node_data.get("name", "Indicator"),
+                        float(node_data.get("x", 0)) + 56,
+                        float(node_data.get("y", 0)) + 18,
+                        node_id=node_data.get("id"),
+                    )
+                elif node_type == "comment":
+                    node = CommentNode(
+                        node_data.get("name", "Note"),
+                        float(node_data.get("x", 0)),
+                        float(node_data.get("y", 0)),
+                        node_id=node_data.get("id"),
+                    )
+                else:
+                    continue
+                node_map[node.node_id] = node
+                self.addItem(node)
 
-        for line_data in model.get("connections", []):
-            source = node_map.get(line_data.get("source"))
-            target = node_map.get(line_data.get("target"))
-            if source and target:
-                line = ConnectionLine(source, target)
-                source.add_connection(line)
-                target.add_connection(line)
-                self.addItem(line)
-        self.node_count = 1 + len([node for node in node_map.values() if isinstance(node, LatentNode)])
-        self.refresh_node_status()
+            for line_data in model.get("connections", []):
+                source = node_map.get(line_data.get("source"))
+                target = node_map.get(line_data.get("target"))
+                if source and target:
+                    line = ConnectionLine(source, target)
+                    source.add_connection(line)
+                    target.add_connection(line)
+                    self.addItem(line)
+            self.node_count = 1 + len([node for node in node_map.values() if isinstance(node, LatentNode)])
+            self.refresh_node_status()
+        finally:
+            self.blockSignals(previous_signal_state)
+            for view in views:
+                view.setUpdatesEnabled(True)
+                view.viewport().update()
+            self.update()
 
     def clear_result_overlays(self) -> None:
         for item in self.items():
@@ -998,7 +1009,7 @@ class ModelCanvasView(QGraphicsView):
         self.setScene(self.scene)
         self.setRenderHint(QPainter.Antialiasing)
         self.setDragMode(QGraphicsView.RubberBandDrag)
-        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+        self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
         self.setAcceptDrops(True)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)

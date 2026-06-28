@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QGridLayout,
+    QGraphicsOpacityEffect,
     QGroupBox,
     QHeaderView,
     QHBoxLayout,
@@ -53,6 +54,7 @@ from core.project_store import export_project_zip, import_project_zip, load_proj
 from gui.canvas import ConnectionLine, IndicatorNode, LatentNode, ModelCanvasView
 from gui.dialogs import DataImportDialog, GroupDialog, NewProjectDialog, PLSSetupDialog, PredictDialog, PremiumDialog
 from gui.icons import icon
+from gui.nonlinear_view import NonlinearWorkspace
 from gui.results_view import BootstrapResultsWidget, PLSResultsWidget, fill_table, make_report_widget
 from gui import theme as ui_theme
 
@@ -79,6 +81,54 @@ class IndicatorTableWidget(QTableWidget):
         names = [self.item(row, 1).text() for row in rows if self.item(row, 1)]
         mime_data.setText(",".join(names))
         return mime_data
+
+
+class WorkspaceTransitionOverlay(QWidget):
+    finished = Signal()
+
+    def __init__(self, old_frame: QPixmap, new_frame: QPixmap, direction: int, parent=None, duration_ms: int = 220):
+        super().__init__(parent)
+        self.old_frame = old_frame
+        self.new_frame = new_frame
+        self.direction = 1 if direction >= 0 else -1
+        self.duration_ms = max(120, duration_ms)
+        self.started_at = 0.0
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+        self.timer = QTimer(self)
+        self.timer.setTimerType(Qt.PreciseTimer)
+        self.timer.setInterval(16)
+        self.timer.timeout.connect(self._tick)
+
+    def start(self) -> None:
+        self.started_at = time.perf_counter()
+        self.show()
+        self.raise_()
+        self.timer.start()
+
+    def _tick(self) -> None:
+        progress = min(1.0, (time.perf_counter() - self.started_at) * 1000.0 / self.duration_ms)
+        self.update()
+        if progress >= 1.0:
+            self.timer.stop()
+            self.finished.emit()
+
+    def paintEvent(self, event) -> None:
+        progress = min(1.0, (time.perf_counter() - self.started_at) * 1000.0 / self.duration_ms)
+        eased = 1.0 - (1.0 - progress) ** 3
+        width = max(1, self.width())
+        height = max(1, self.height())
+        travel = min(36, max(16, int(width * 0.025)))
+        old_x = int(-self.direction * travel * eased)
+        new_x = int(self.direction * travel * (1.0 - eased))
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
+        painter.setOpacity(max(0.0, 1.0 - eased))
+        painter.drawPixmap(old_x, 0, self.old_frame)
+        painter.setOpacity(min(1.0, eased))
+        painter.drawPixmap(new_x, 0, self.new_frame)
 
 
 class HeroBanner(QFrame):
@@ -412,7 +462,11 @@ class MainWindow(QMainWindow):
         self._results_tab_label = ""
         self._calculation_running = False
         self._data_load_running = False
+        self._data_view_dirty = False
         self._project_tree_limit = 300
+        self._project_panel_user_visible = True
+        self._indicator_panel_user_visible = True
+        self._workspace_transition_overlay: WorkspaceTransitionOverlay | None = None
 
         self.setWindowTitle("PySmartPLS")
         self.resize(1440, 900)
@@ -422,7 +476,6 @@ class MainWindow(QMainWindow):
         self._tree_refresh_timer.setSingleShot(True)
         self._tree_refresh_timer.setInterval(250)
         self._tree_refresh_timer.timeout.connect(self.update_project_tree)
-        self.canvas_view.scene.changed.connect(lambda *_: self._tree_refresh_timer.start())
         self._apply_styles()
         self.update_project_tree()
 
@@ -438,7 +491,8 @@ class MainWindow(QMainWindow):
         splitter.setChildrenCollapsible(False)
         self.setCentralWidget(splitter)
 
-        splitter.addWidget(self._build_left_panel())
+        self.left_sidebar = self._build_left_panel()
+        splitter.addWidget(self.left_sidebar)
         splitter.addWidget(self._build_center_panel())
         self.model_sidebar = self._build_right_panel()
         splitter.addWidget(self.model_sidebar)
@@ -552,6 +606,9 @@ class MainWindow(QMainWindow):
                 self._menu_action(calculate, key, title, lambda checked=False, value=title: self.show_planned_analysis(value), image_name)
         consistent = calculate.addMenu(icon("plus", 16), "Consistent PLS Algorithms")
         self._menu_action(consistent, "cpls", "Consistent PLS", lambda: self.show_planned_analysis("Consistent PLS"), "analysis")
+        calculate.addSeparator()
+        self._menu_action(calculate, "nonlinear_ml", "Phân tích phi tuyến tính (XGBoost · SHAP · PySR)",
+                          lambda: self.open_nonlinear("workspace"), "nonlinear")
 
         info = bar.addMenu("Info")
         self._menu_action(info, "guide", "Quick Start Guide", self.show_quick_guide, "help")
@@ -597,6 +654,16 @@ class MainWindow(QMainWindow):
             "add_group": ("Add Data Group", "add-data-group", lambda: self.show_planned_analysis("Add Data Group"), False),
             "generate_groups": ("Generate Data Groups", "generate-data-groups", lambda: self.show_planned_analysis("Generate Data Groups"), False),
             "clear_groups": ("Clear Data Groups", "clear-data-groups", lambda: self.show_planned_analysis("Clear Data Groups"), False),
+            # --- Phi tuyến tính (Nonlinear ML) half ---
+            "nl_workspace": ("Phi tuyến tính", "nonlinear", lambda: self.open_nonlinear("workspace"), False),
+            "nl_load": ("Nạp dữ liệu", "nl-data", lambda: self.open_nonlinear("load"), False),
+            "nl_train": ("Huấn luyện", "xgboost", lambda: self.open_nonlinear("train"), False),
+            "nl_shap": ("SHAP", "shap", lambda: self.open_nonlinear("shap"), False),
+            "nl_symbolic": ("Hồi quy biểu thức", "symbolic", lambda: self.open_nonlinear("symbolic"), False),
+            "nl_sensitivity": ("Độ nhạy Sobol", "sensitivity", lambda: self.open_nonlinear("sensitivity"), False),
+            "nl_optimize": ("Tối ưu hóa", "optimize", lambda: self.open_nonlinear("optimize"), False),
+            "nl_report": ("Báo cáo ML", "report", lambda: self.open_nonlinear("report"), False),
+            "nl_back_model": ("Mô hình PLS", "path-model", self.go_to_canvas, False),
         }
         mode_group = QActionGroup(self)
         mode_group.setExclusive(True)
@@ -633,8 +700,12 @@ class MainWindow(QMainWindow):
             return
         self.toolbar.clear()
         if context == "model":
-            keys = ["save", "new_project", "new_model", "undo", "redo", "zoom_out", "zoom_in", "select", "latent", "connect", "quadratic", "moderating", "comment", "calculate", "bootstrap"]
-        elif context == "data":
+            self._build_split_toolbar()
+            return
+        if context == "nonlinear":
+            self._build_nonlinear_toolbar()
+            return
+        if context == "data":
             keys = ["save", "new_project", "new_model", "add_group", "generate_groups", "clear_groups"]
         elif context == "results":
             keys = ["save", "new_project", "new_model", "hide_zero", "decimals_up", "decimals_down", "export_excel", "export_web", "export_r_results"]
@@ -642,6 +713,94 @@ class MainWindow(QMainWindow):
             keys = ["save", "new_project", "new_model"]
         for key in keys:
             self.toolbar.addAction(self.tool_actions[key])
+
+    # ---- two-half toolbar (PLS-SEM | Phi tuyến tính) ---------------------- #
+    def _tb_caption(self, text: str, ml: bool = False) -> None:
+        label = QLabel(text.upper())
+        label.setObjectName("ToolbarCaptionML" if ml else "ToolbarCaption")
+        label.setAlignment(Qt.AlignVCenter)
+        self.toolbar.addWidget(label)
+
+    def _tb_seam(self) -> None:
+        seam = QFrame()
+        seam.setObjectName("ToolbarSeam")
+        seam.setFrameShape(QFrame.NoFrame)
+        self.toolbar.addWidget(seam)
+
+    def _tb_action(self, key: str, *, obj_name: str = "", ml: bool = False) -> None:
+        action = self.tool_actions[key]
+        self.toolbar.addAction(action)
+        button = self.toolbar.widgetForAction(action)
+        if button is None:
+            return
+        if obj_name:
+            button.setObjectName(obj_name)
+        if ml:
+            button.setProperty("mlSide", True)
+        if obj_name or ml:
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def _tb_popup(self, text: str, icon_name: str, action_keys: list[str], ml: bool = False) -> None:
+        button = QToolButton()
+        button.setText(text)
+        button.setIcon(icon(icon_name, 30))
+        button.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        button.setPopupMode(QToolButton.InstantPopup)
+        button.setCursor(Qt.PointingHandCursor)
+        menu = QMenu(button)
+        for key in action_keys:
+            menu.addAction(self.tool_actions[key])
+        button.setMenu(menu)
+        if ml:
+            button.setProperty("mlSide", True)
+            button.style().unpolish(button)
+            button.style().polish(button)
+        self.toolbar.addWidget(button)
+
+    def _build_split_toolbar(self) -> None:
+        # LEFT zone — PLS-SEM (tidied via overflow popups to kill clutter)
+        self._tb_caption("PLS-SEM")
+        self.toolbar.addAction(self.tool_actions["save"])
+        self.toolbar.addAction(self.tool_actions["new_model"])
+        self.toolbar.addSeparator()
+        self._tb_popup("Lịch sử", "undo", ["undo", "redo"])
+        self._tb_popup("Thu phóng", "zoom-in", ["zoom_out", "zoom_in"])
+        self.toolbar.addSeparator()
+        self.toolbar.addAction(self.tool_actions["select"])
+        self.toolbar.addAction(self.tool_actions["latent"])
+        self.toolbar.addAction(self.tool_actions["connect"])
+        self._tb_popup("Hiệu ứng", "effects", ["quadratic", "moderating", "comment"])
+        self.toolbar.addSeparator()
+        self._tb_action("calculate", obj_name="PrimaryToolAction")
+        self.toolbar.addAction(self.tool_actions["bootstrap"])
+        # SEAM — the one strong divider between the two worlds
+        self._tb_seam()
+        # RIGHT zone — Phi tuyến tính
+        self._tb_caption("Phi tuyến tính", ml=True)
+        self._tb_action("nl_workspace", obj_name="PrimaryToolActionML", ml=True)
+        self.toolbar.addSeparator()
+        self._tb_action("nl_load", ml=True)
+        self._tb_action("nl_train", ml=True)
+        self._tb_popup("Phân tích", "sensitivity",
+                       ["nl_shap", "nl_symbolic", "nl_sensitivity", "nl_optimize", "nl_report"], ml=True)
+
+    def _build_nonlinear_toolbar(self) -> None:
+        # When the nonlinear tab is active: file cluster + the full ML pipeline + back.
+        self.toolbar.addAction(self.tool_actions["save"])
+        self.toolbar.addAction(self.tool_actions["new_model"])
+        self._tb_seam()
+        self._tb_caption("Phi tuyến tính", ml=True)
+        self._tb_action("nl_load", ml=True)
+        self._tb_action("nl_train", ml=True)
+        self._tb_action("nl_shap", ml=True)
+        self._tb_action("nl_symbolic", ml=True)
+        self._tb_action("nl_sensitivity", ml=True)
+        self._tb_action("nl_optimize", ml=True)
+        self.toolbar.addSeparator()
+        self._tb_action("nl_report", ml=True)
+        self.toolbar.addSeparator()
+        self._tb_action("nl_back_model", obj_name="PrimaryToolAction")
 
     def _add_toolbar_action(self, toolbar: QToolBar, title: str, callback) -> QAction:
         action = QAction(title, self)
@@ -680,6 +839,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._panel_header("Project Explorer", "folder", [
             ("plus", self.new_project, "Create project"), ("minus", self.remove_project_entry, "Remove from explorer"), ("star", self.load_sample_project, "Sample project")
         ]))
+        self.project_panel_title_text = self._last_panel_title_text
         self.project_tree = QTreeWidget()
         self.project_tree.setHeaderHidden(True)
         self.project_tree.setObjectName("ProjectTree")
@@ -700,6 +860,7 @@ class MainWindow(QMainWindow):
             ("filter-yellow", lambda: self.apply_indicator_filter("unused"), "Unused indicators"),
             ("filter-blue", lambda: self.apply_indicator_filter("used"), "Used indicators"),
         ]))
+        self.indicator_panel_title_text = self._last_panel_title_text
         self.indicator_filter = QLineEdit()
         self.indicator_filter.setPlaceholderText("Search indicators...")
         self.indicator_filter.setClearButtonEnabled(True)
@@ -741,6 +902,7 @@ class MainWindow(QMainWindow):
         row.addWidget(title_label)
         text = QLabel(title)
         text.setObjectName("PanelTitleText")
+        self._last_panel_title_text = text
         row.addWidget(text)
         row.addStretch()
         for image_name, callback, tooltip in buttons:
@@ -765,6 +927,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._data_tab(), "Data")
         self.tabs.addTab(self.canvas_view, "Path Model")
         self.tabs.addTab(self._results_page(), "Results")
+        self.nonlinear = NonlinearWorkspace(self)
+        self.tabs.addTab(self.nonlinear, "Phi tuyến tính")
         self.tabs.tabBar().setVisible(False)
         outer.addWidget(self.tabs)
 
@@ -1139,18 +1303,80 @@ class MainWindow(QMainWindow):
     def _show_workspace_tab(self, index: int) -> None:
         self.tabs.setTabVisible(0, index == 0)
         self.tabs.tabBar().setVisible(index != 0)
+        current = self.tabs.currentIndex()
+        if current == index:
+            self._on_tab_changed(index)
+            return
+        if index in {2, 4} or current in {2, 4}:
+            self._animate_workspace_switch(index)
+            return
+        self._set_workspace_index(index)
+
+    def _set_workspace_index(self, index: int) -> None:
+        blocked = self.tabs.blockSignals(True)
         self.tabs.setCurrentIndex(index)
+        self.tabs.blockSignals(blocked)
         self._on_tab_changed(index)
+
+    def _animate_workspace_switch(self, index: int) -> None:
+        if self._workspace_transition_overlay is not None:
+            self._workspace_transition_overlay.deleteLater()
+            self._workspace_transition_overlay = None
+
+        target_widget = self.tabs.widget(index)
+        if target_widget is None or self.width() <= 0 or self.height() <= 0:
+            self._set_workspace_index(index)
+            return
+
+        old_frame = self.grab()
+        direction = 1 if index > self.tabs.currentIndex() else -1
+        self._set_workspace_index(index)
+        new_frame = self.grab()
+
+        overlay = WorkspaceTransitionOverlay(old_frame, new_frame, direction, self)
+        overlay.setGeometry(self.rect())
+        self._workspace_transition_overlay = overlay
+
+        def cleanup() -> None:
+            if self._workspace_transition_overlay is overlay:
+                self._workspace_transition_overlay = None
+            overlay.deleteLater()
+
+        overlay.finished.connect(cleanup)
+        overlay.start()
 
     def _on_tab_changed(self, index: int) -> None:
         if not hasattr(self, "model_sidebar"):
             return
+        if index == 1 and self._data_view_dirty:
+            self.update_data_views()
         is_model = index == 2
+        is_nonlinear = index == 4
         self.model_sidebar.setVisible(is_model)
-        context = "model" if is_model else "data" if index == 1 else "results" if index == 3 else "home"
+        self._sync_left_sidebar_visibility(force_hide=is_nonlinear)
+        context = ("model" if is_model else "data" if index == 1
+                   else "results" if index == 3 else "nonlinear" if index == 4 else "home")
         self._set_toolbar_context(context)
         if index == 3:
             self._sync_results_toolbar()
+
+    def _sync_left_sidebar_visibility(self, *, force_hide: bool = False) -> None:
+        if not hasattr(self, "project_panel"):
+            return
+        project_visible = bool(self._project_panel_user_visible and not force_hide)
+        indicator_visible = bool(self._indicator_panel_user_visible and not force_hide)
+        self.project_panel.setVisible(project_visible)
+        self.indicator_panel.setVisible(indicator_visible)
+        if hasattr(self, "left_sidebar"):
+            self.left_sidebar.setVisible(project_visible or indicator_visible)
+        for key, visible in (("show_explorer", project_visible), ("show_indicators", indicator_visible)):
+            action = self.actions.get(key)
+            if action is None:
+                continue
+            blocked = action.blockSignals(True)
+            action.setChecked(visible)
+            action.setEnabled(not force_hide)
+            action.blockSignals(blocked)
 
     @staticmethod
     def _safe_filename(name: str) -> str:
@@ -1238,7 +1464,17 @@ class MainWindow(QMainWindow):
 
     def _activate_model(self, project_path: str, model_id: str) -> None:
         if project_path != self.project_path:
-            self._activate_project(project_path)
+            self._save_current_silently()
+            state = normalize_project_state(load_project(project_path))
+            project_dir = Path(project_path).parent
+            for entry in state.get("data_files", []):
+                raw_path = str(entry.get("path", ""))
+                data_path = Path(raw_path) if raw_path else None
+                if data_path is not None and not data_path.is_absolute():
+                    entry["path"] = str((project_dir / data_path).resolve())
+            self.project_state = state
+            self.project_path = project_path
+            self.workspace_dir = project_dir if project_dir.name != "Archive" else project_dir.parent
         else:
             self._sync_active_model()
         model = next((item for item in self.project_state.get("models", []) if item.get("id") == model_id), None)
@@ -1249,9 +1485,14 @@ class MainWindow(QMainWindow):
         self.current_data_id = model.get("data_file_id", "")
         self.project_state["active_data_id"] = self.current_data_id
         self.canvas_view.load_model_state(model.get("model", {}))
-        self._load_active_data(show_tab=False)
         self.tabs.setTabText(2, f"{model.get('name', 'Path Model')}.splsm")
         self._show_workspace_tab(2)
+        QTimer.singleShot(25, lambda path=project_path, mid=model_id: self._finish_model_activation(path, mid))
+
+    def _finish_model_activation(self, project_path: str, model_id: str) -> None:
+        if project_path != self.project_path or model_id != self.current_model_id:
+            return
+        self._load_active_data(show_tab=False)
         self._save_current_silently()
         self.update_project_tree()
 
@@ -1279,7 +1520,10 @@ class MainWindow(QMainWindow):
         self.data_frame = loaded.frame
         self.data_path = loaded.path
         self._populate_indicators(self.data_frame.columns)
-        self.update_data_views(extra_warnings=loaded.warnings)
+        if show_tab:
+            self.update_data_views(extra_warnings=loaded.warnings)
+        else:
+            self._data_view_dirty = True
         self.tabs.setTabText(1, f"{entry.get('name', Path(loaded.path).stem)}{Path(loaded.path).suffix}")
         if show_tab:
             self._show_workspace_tab(1)
@@ -1498,9 +1742,12 @@ class MainWindow(QMainWindow):
         menu_titles = ["Tệp", "Chỉnh sửa", "Hiển thị", "Giao diện", "Tính toán", "Thông tin", "Ngôn ngữ"] if language == "vi" else ["File", "Edit", "View", "Themes", "Calculate", "Info", "Language"]
         for action, title in zip(self.menuBar().actions(), menu_titles):
             action.setText(title)
-        panel_titles = ["Trình quản lý dự án", "Biến quan sát"] if language == "vi" else ["Project Explorer", "Indicators"]
-        for label, title in zip(self.findChildren(QLabel, "PanelTitleText"), panel_titles):
-            label.setText(title)
+        project_title = "Trình quản lý dự án" if language == "vi" else "Project Explorer"
+        indicator_title = "Biến quan sát" if language == "vi" else "Indicators"
+        if hasattr(self, "project_panel_title_text"):
+            self.project_panel_title_text.setText(project_title)
+        if hasattr(self, "indicator_panel_title_text"):
+            self.indicator_panel_title_text.setText(indicator_title)
         tab_titles = ["Không gian làm việc", "Dữ liệu", "Mô hình đường dẫn", "Kết quả"] if language == "vi" else ["Workspace", "Data", "Path Model", "Results"]
         for index, title in enumerate(tab_titles):
             self.tabs.setTabText(index, title)
@@ -1552,10 +1799,12 @@ class MainWindow(QMainWindow):
         self._apply_styles(theme)
 
     def toggle_project_panel(self, checked: bool) -> None:
-        self.project_panel.setVisible(checked)
+        self._project_panel_user_visible = checked
+        self._sync_left_sidebar_visibility(force_hide=self.tabs.currentIndex() == 4)
 
     def toggle_indicator_panel(self, checked: bool) -> None:
-        self.indicator_panel.setVisible(checked)
+        self._indicator_panel_user_visible = checked
+        self._sync_left_sidebar_visibility(force_hide=self.tabs.currentIndex() == 4)
 
     def apply_indicator_filter(self, mode: str) -> None:
         used = set(self.canvas_view.used_indicators())
@@ -1841,28 +2090,6 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Import Data", "A data file is already loading. Please wait for it to finish.")
             return
         self._data_load_running = True
-        if payload is not None:
-            fill_table(self.profile_table, payload["profile"])
-            self.profile_table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-            self.profile_table.verticalHeader().setDefaultSectionSize(24)
-            self.profile_table.horizontalHeader().setFixedHeight(28)
-            fill_table(self.correlation_table, payload["correlations"])
-            best_text = payload.get("best_text", "")
-            self.best_correlation_label.setText(best_text)
-            self.best_correlation_label.setVisible(bool(best_text))
-            fill_table(self.preview_table, payload["preview"])
-            self.data_meta_labels["Delimiter"].setText("Automatic")
-            self.data_meta_labels["Encoding"].setText("UTF-8")
-            self.data_meta_labels["Quote"].setText("Automatic")
-            self.data_meta_labels["Rows"].setText(str(payload.get("rows", len(self.data_frame))))
-            self.data_meta_labels["Format"].setText("Automatic")
-            self.data_meta_labels["Columns"].setText(str(payload.get("columns", len(self.data_frame.columns))))
-            self.data_meta_labels["MissingMarker"].setText("None")
-            self.data_meta_labels["Missing"].setText(str(payload.get("missing", int(self.data_frame.isna().sum().sum()))))
-            warnings = payload.get("warnings", [])
-            self.data_warning_box.setPlainText("\n".join(f"- {warning}" for warning in warnings) if warnings else "KhÃ´ng cÃ³ cáº£nh bÃ¡o dá»¯ liá»‡u.")
-            return
-
         used = self.canvas_view.used_indicators() if hasattr(self, "canvas_view") else []
         self.statusBar().showMessage(f"Loading data: {Path(path).name}...")
         self._data_thread = QThread(self)
@@ -1972,6 +2199,30 @@ class MainWindow(QMainWindow):
             for key, value in (("Rows", "0"), ("Columns", "0"), ("Missing", "0")):
                 if key in self.data_meta_labels:
                     self.data_meta_labels[key].setText(value)
+            self._data_view_dirty = False
+            return
+
+        if payload is not None:
+            fill_table(self.profile_table, payload["profile"])
+            self.profile_table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+            self.profile_table.verticalHeader().setDefaultSectionSize(24)
+            self.profile_table.horizontalHeader().setFixedHeight(28)
+            fill_table(self.correlation_table, payload["correlations"])
+            best_text = payload.get("best_text", "")
+            self.best_correlation_label.setText(best_text)
+            self.best_correlation_label.setVisible(bool(best_text))
+            fill_table(self.preview_table, payload["preview"])
+            self.data_meta_labels["Delimiter"].setText("Automatic")
+            self.data_meta_labels["Encoding"].setText("UTF-8")
+            self.data_meta_labels["Quote"].setText("Automatic")
+            self.data_meta_labels["Rows"].setText(str(payload.get("rows", len(self.data_frame))))
+            self.data_meta_labels["Format"].setText("Automatic")
+            self.data_meta_labels["Columns"].setText(str(payload.get("columns", len(self.data_frame.columns))))
+            self.data_meta_labels["MissingMarker"].setText("None")
+            self.data_meta_labels["Missing"].setText(str(payload.get("missing", int(self.data_frame.isna().sum().sum()))))
+            warnings = payload.get("warnings", [])
+            self.data_warning_box.setPlainText("\n".join(f"- {warning}" for warning in warnings) if warnings else "No data warnings.")
+            self._data_view_dirty = False
             return
 
         used = self.canvas_view.used_indicators() if hasattr(self, "canvas_view") else []
@@ -2018,6 +2269,8 @@ class MainWindow(QMainWindow):
         self.data_meta_labels["Missing"].setText(str(int(self.data_frame.isna().sum().sum())))
         self.data_warning_box.setPlainText("\n".join(f"- {warning}" for warning in warnings) if warnings else "Không có cảnh báo dữ liệu.")
 
+        self._data_view_dirty = False
+
     def copy_data_table(self) -> None:
         if self.data_frame is None:
             return
@@ -2045,6 +2298,18 @@ class MainWindow(QMainWindow):
 
     def go_to_canvas(self) -> None:
         self._show_workspace_tab(2)
+
+    def open_nonlinear(self, step: str = "workspace") -> None:
+        """Open the Phi tuyến tính (Nonlinear ML) workspace at the given stage."""
+        if self.data_frame is None:
+            self._load_active_data(show_tab=False)
+        name = ""
+        entry = self._active_data_entry()
+        if entry:
+            name = entry.get("name", "")
+        self.nonlinear.set_app_data(self.data_frame, name)
+        self._show_workspace_tab(4)
+        self.nonlinear.go_to_stage(step)
 
     def run_pls_algorithm(self) -> None:
         self.run_calculate(bootstrap=False)
@@ -2725,12 +2990,21 @@ class MainWindow(QMainWindow):
         return "Hình thành / Mode B" if mode == "formative" else "Phản ánh / Mode A"
 
     def closeEvent(self, event) -> None:
+        # If a nonlinear ML job is running, refuse to close (its worker is one long
+        # blocking call that can't be interrupted) so Qt never destroys a live QThread.
+        if hasattr(self, "nonlinear") and self.nonlinear.has_running_job():
+            QMessageBox.information(
+                self, "Đang chạy tác vụ",
+                "Một tác vụ phân tích phi tuyến đang chạy. Hãy đợi hoàn tất trước khi đóng.")
+            event.ignore()
+            return
         try:
             self._save_current_silently()
         except OSError:
             pass
-        finally:
-            super().closeEvent(event)
+        if hasattr(self, "nonlinear"):
+            self.nonlinear.shutdown()
+        super().closeEvent(event)
 
     def _apply_styles(self, theme: str = ui_theme.DEFAULT_THEME) -> None:
         self.current_theme = theme
