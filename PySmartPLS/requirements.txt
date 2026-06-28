@@ -1,0 +1,7 @@
+PySide6>=6.11
+pandas>=3.0
+numpy>=2.4
+scipy>=1.18
+openpyxl>=3.1
+xlsxwriter>=3.2
+pyreadstat>=1.3
