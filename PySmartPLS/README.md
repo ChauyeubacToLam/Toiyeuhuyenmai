@@ -4,6 +4,8 @@ Desktop app Python/PySide6 for visual PLS-SEM analysis. This project is position
 
 ## Run
 
+### Windows
+
 ```powershell
 cd "D:\Huyền Mai\PySmartPLS"
 .\venv\Scripts\python.exe main.py
@@ -16,6 +18,21 @@ python -m venv venv
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
 .\venv\Scripts\python.exe main.py
 ```
+
+### macOS
+
+Use Python 3.11+ from python.org or Homebrew. From a fresh clone:
+
+```bash
+cd ~/Toiyeuhuyenmai/PySmartPLS
+python3 -m venv venv
+source venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python main.py
+```
+
+If macOS blocks a packaged `.app`, open **System Settings > Privacy & Security** and allow the app once. The in-app update check works when the app is launched from a Git checkout; packaged builds without a `.git` folder skip that check and continue normally.
 
 ## Current MVP Features
 

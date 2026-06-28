@@ -368,17 +368,37 @@ def _note(p: QPainter) -> None:
 
 
 def _align(p: QPainter, name: str) -> None:
-    p.setPen(_pen(QColor("#5b6776"), 1.2)); p.setBrush(QColor("#9aa6b5"))
-    if "bottom" in name:
-        p.drawRect(QRectF(4, 5, 6, 13)); p.drawRect(QRectF(14, 9, 6, 9)); p.drawLine(QPointF(2, 20), QPointF(22, 20))
-    elif "top" in name:
-        p.drawRect(QRectF(4, 6, 6, 13)); p.drawRect(QRectF(14, 6, 6, 9)); p.drawLine(QPointF(2, 4), QPointF(22, 4))
+    guide = QColor("#5b6776")
+    fill = QColor("#9aa6b5")
+    border = QColor("#667386")
+    p.setRenderHint(QPainter.Antialiasing, False)
+    p.setPen(QPen(guide, 1.8, Qt.SolidLine, Qt.RoundCap))
+    p.setBrush(fill)
+
+    def block(rect: QRectF) -> None:
+        p.setPen(_pen(border, 1.0))
+        p.setBrush(fill)
+        p.drawRect(rect)
+
+    if "top" in name:
+        p.drawLine(QPointF(3, 5), QPointF(21, 5))
+        block(QRectF(5, 5, 5, 13))
+        block(QRectF(14, 5, 5, 8))
+    elif "bottom" in name:
+        p.drawLine(QPointF(3, 19), QPointF(21, 19))
+        block(QRectF(5, 6, 5, 13))
+        block(QRectF(14, 11, 5, 8))
     elif "left" in name:
-        p.drawRect(QRectF(5, 4, 13, 6)); p.drawRect(QRectF(5, 14, 9, 6)); p.drawLine(QPointF(3, 2), QPointF(3, 22))
+        p.drawLine(QPointF(5, 3), QPointF(5, 21))
+        block(QRectF(5, 5, 13, 5))
+        block(QRectF(5, 14, 8, 5))
     elif "right" in name:
-        p.drawRect(QRectF(6, 4, 13, 6)); p.drawRect(QRectF(10, 14, 9, 6)); p.drawLine(QPointF(21, 2), QPointF(21, 22))
+        p.drawLine(QPointF(19, 3), QPointF(19, 21))
+        block(QRectF(6, 5, 13, 5))
+        block(QRectF(11, 14, 8, 5))
     else:
-        p.drawRect(QRectF(4, 5, 16, 5)); p.drawRect(QRectF(7, 14, 10, 5))
+        block(QRectF(4, 5, 16, 5))
+        block(QRectF(7, 14, 10, 5))
 
 
 def _gear(p: QPainter) -> None:

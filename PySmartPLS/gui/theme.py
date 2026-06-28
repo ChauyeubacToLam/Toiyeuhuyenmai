@@ -15,13 +15,34 @@ Public API
 """
 from __future__ import annotations
 
+import os
+import sys
+import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsDropShadowEffect, QWidget
 
-ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets"
+def _qss_asset_dir() -> Path:
+    override = os.environ.get("PYSMARTPLS_QSS_CACHE")
+    if override:
+        return Path(override)
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support" / "PySmartPLS"
+    elif sys.platform.startswith("win"):
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "PySmartPLS"
+    else:
+        base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "pysmartpls"
+    target = base / "qss"
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+    except OSError:
+        return Path(tempfile.gettempdir()) / "pysmartpls-qss"
+
+
+ASSETS_DIR = _qss_asset_dir()
 
 
 DEFAULT_THEME = "classic"  # Premium Light (royal blue) — the app default.

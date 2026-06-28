@@ -5,6 +5,7 @@ from pathlib import Path
 import os
 import shutil
 import re
+import sys
 import time
 import uuid
 from typing import Any
@@ -477,7 +478,8 @@ class MainWindow(QMainWindow):
         self._tree_refresh_timer.setInterval(250)
         self._tree_refresh_timer.timeout.connect(self.update_project_tree)
         self._apply_styles()
-        self.update_project_tree()
+        self._set_project_tree_loading()
+        QTimer.singleShot(400, self.update_project_tree)
 
     def _init_ui(self) -> None:
         self.canvas_view = ModelCanvasView()
@@ -927,8 +929,9 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._data_tab(), "Data")
         self.tabs.addTab(self.canvas_view, "Path Model")
         self.tabs.addTab(self._results_page(), "Results")
-        self.nonlinear = NonlinearWorkspace(self)
-        self.tabs.addTab(self.nonlinear, "Phi tuyến tính")
+        self._nonlinear_placeholder = QWidget()
+        self._nonlinear_placeholder.setObjectName("NonlinearWorkspace")
+        self.tabs.addTab(self._nonlinear_placeholder, "Phi tuyến tính")
         self.tabs.tabBar().setVisible(False)
         outer.addWidget(self.tabs)
 
@@ -936,6 +939,22 @@ class MainWindow(QMainWindow):
         self.properties_box = QTextEdit()
         self.checker_box = QTextEdit()
         return container
+
+    def _ensure_nonlinear_workspace(self) -> NonlinearWorkspace:
+        nonlinear = getattr(self, "nonlinear", None)
+        if nonlinear is not None:
+            return nonlinear
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.statusBar().showMessage("Đang mở không gian Phi tuyến tính...")
+            QApplication.processEvents()
+            nonlinear = NonlinearWorkspace(self)
+            self.nonlinear = nonlinear
+            self.tabs.removeTab(4)
+            self.tabs.insertTab(4, nonlinear, "Phi tuyến tính")
+            return nonlinear
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _results_page(self) -> QWidget:
         page = QWidget()
@@ -2307,9 +2326,10 @@ class MainWindow(QMainWindow):
         entry = self._active_data_entry()
         if entry:
             name = entry.get("name", "")
-        self.nonlinear.set_app_data(self.data_frame, name)
+        nonlinear = self._ensure_nonlinear_workspace()
+        nonlinear.set_app_data(self.data_frame, name)
         self._show_workspace_tab(4)
-        self.nonlinear.go_to_stage(step)
+        nonlinear.go_to_stage(step)
 
     def run_pls_algorithm(self) -> None:
         self.run_calculate(bootstrap=False)
@@ -2800,74 +2820,91 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Đã mở dự án mẫu")
 
     def update_project_tree(self) -> None:
+        if not hasattr(self, "project_tree"):
+            return
+        self.project_tree.setUpdatesEnabled(False)
         self.project_tree.clear()
-        self._sync_active_model()
-        current = Path(self.project_path).resolve() if self.project_path else None
-        project_files = self._project_files_for_tree()
-        if current and current.exists() and current not in [path.resolve() for path in project_files]:
-            project_files.insert(0, current)
-        current_item = None
-        for project_file in project_files:
-            try:
-                is_current = bool(current and project_file.resolve() == current)
-                state = self.project_state if is_current else normalize_project_state(load_project(str(project_file)))
-            except Exception:
-                continue
-            root = QTreeWidgetItem([state.get("name", project_file.stem)])
-            root.setData(0, Qt.UserRole + 1, str(project_file))
-            root.setData(0, Qt.UserRole + 2, "project")
-            root.setIcon(0, icon("project-ok" if self._project_complete(state) else "project-error", 19))
-            self.project_tree.addTopLevelItem(root)
-            if is_current:
-                current_item = root
+        try:
+            self._sync_active_model()
+            current = Path(self.project_path).resolve() if self.project_path else None
+            project_files = self._project_files_for_tree()
+            current_known = {path.resolve() for path in project_files}
+            if current and current not in current_known:
+                project_files.insert(0, current)
+            current_item = None
+            for project_file in project_files:
+                try:
+                    is_current = bool(current and project_file.resolve() == current)
+                    state = self.project_state if is_current else normalize_project_state(load_project(str(project_file)))
+                except Exception:
+                    continue
+                root = QTreeWidgetItem([state.get("name", project_file.stem)])
+                root.setData(0, Qt.UserRole + 1, str(project_file))
+                root.setData(0, Qt.UserRole + 2, "project")
+                root.setIcon(0, icon("project-ok" if self._project_complete(state, check_data_files=False) else "project-error", 19))
+                self.project_tree.addTopLevelItem(root)
+                if is_current:
+                    current_item = root
 
-            data_files = state.get("data_files", [])
-            if not data_files:
-                placeholder = QTreeWidgetItem(["Double-click to import"])
-                placeholder.setIcon(0, icon("info", 17))
-                placeholder.setData(0, Qt.UserRole + 1, str(project_file))
-                placeholder.setData(0, Qt.UserRole + 2, "import-data")
-                font = placeholder.font(0); font.setItalic(True); placeholder.setFont(0, font)
-                placeholder.setForeground(0, QBrush(QColor("#666666")))
-                root.addChild(placeholder)
+                data_files = state.get("data_files", [])
+                if not data_files:
+                    placeholder = QTreeWidgetItem(["Double-click to import"])
+                    placeholder.setIcon(0, icon("info", 17))
+                    placeholder.setData(0, Qt.UserRole + 1, str(project_file))
+                    placeholder.setData(0, Qt.UserRole + 2, "import-data")
+                    font = placeholder.font(0); font.setItalic(True); placeholder.setFont(0, font)
+                    placeholder.setForeground(0, QBrush(QColor("#666666")))
+                    root.addChild(placeholder)
 
-            for model in state.get("models", []):
-                complete = self._model_complete(model.get("model", {})) and bool(model.get("data_file_id"))
-                child = QTreeWidgetItem([model.get("name", "Path Model")])
-                child.setIcon(0, icon("path-ok" if complete else "path-error", 18))
-                child.setData(0, Qt.UserRole + 1, str(project_file))
-                child.setData(0, Qt.UserRole + 2, "model")
-                child.setData(0, Qt.UserRole + 3, model.get("id", ""))
-                root.addChild(child)
+                for model in state.get("models", []):
+                    complete = self._model_complete(model.get("model", {})) and bool(model.get("data_file_id"))
+                    child = QTreeWidgetItem([model.get("name", "Path Model")])
+                    child.setIcon(0, icon("path-ok" if complete else "path-error", 18))
+                    child.setData(0, Qt.UserRole + 1, str(project_file))
+                    child.setData(0, Qt.UserRole + 2, "model")
+                    child.setData(0, Qt.UserRole + 3, model.get("id", ""))
+                    root.addChild(child)
 
-            for data in data_files:
-                rows = data.get("rows", "")
-                suffix = f" [{rows} records]" if rows != "" else ""
-                child = QTreeWidgetItem([f"{data.get('name', 'Data')}{suffix}"])
-                data_exists = bool(data.get("path") and Path(str(data.get("path"))).exists())
-                child.setIcon(0, icon("data-green" if data_exists else "project-error", 18))
-                child.setData(0, Qt.UserRole + 1, str(project_file))
-                child.setData(0, Qt.UserRole + 2, "data")
-                child.setData(0, Qt.UserRole + 3, data.get("id", ""))
-                if is_current and data.get("id") == self.current_data_id:
-                    child.setForeground(0, QBrush(QColor("#00a818")))
-                    font = child.font(0); font.setBold(True); child.setFont(0, font)
-                root.addChild(child)
+                for data in data_files:
+                    rows = data.get("rows", "")
+                    suffix = f" [{rows} records]" if rows != "" else ""
+                    child = QTreeWidgetItem([f"{data.get('name', 'Data')}{suffix}"])
+                    data_exists = bool(data.get("path"))
+                    child.setIcon(0, icon("data-green" if data_exists else "project-error", 18))
+                    child.setData(0, Qt.UserRole + 1, str(project_file))
+                    child.setData(0, Qt.UserRole + 2, "data")
+                    child.setData(0, Qt.UserRole + 3, data.get("id", ""))
+                    if is_current and data.get("id") == self.current_data_id:
+                        child.setForeground(0, QBrush(QColor("#00a818")))
+                        font = child.font(0); font.setBold(True); child.setFont(0, font)
+                    root.addChild(child)
 
-        archive_item = QTreeWidgetItem(["Archive"])
-        archive_item.setIcon(0, icon("archive", 18))
-        archive_item.setData(0, Qt.UserRole + 2, "archive")
-        archive_dir = self.workspace_dir / "Archive"
-        if archive_dir.exists():
-            for backup in sorted(archive_dir.glob("*.zip"), key=lambda p: p.name.lower()):
-                child = QTreeWidgetItem([backup.stem])
-                child.setIcon(0, icon("archive", 16))
-                archive_item.addChild(child)
-        self.project_tree.addTopLevelItem(archive_item)
-        if current_item:
-            current_item.setExpanded(True)
-            self.project_tree.setCurrentItem(current_item)
-        self._update_action_state()
+            archive_item = QTreeWidgetItem(["Archive"])
+            archive_item.setIcon(0, icon("archive", 18))
+            archive_item.setData(0, Qt.UserRole + 2, "archive")
+            archive_dir = self.workspace_dir / "Archive"
+            if archive_dir.exists():
+                for backup in sorted(archive_dir.glob("*.zip"), key=lambda p: p.name.lower()):
+                    child = QTreeWidgetItem([backup.stem])
+                    child.setIcon(0, icon("archive", 16))
+                    archive_item.addChild(child)
+            self.project_tree.addTopLevelItem(archive_item)
+            if current_item:
+                current_item.setExpanded(True)
+                self.project_tree.setCurrentItem(current_item)
+            self._update_action_state()
+        finally:
+            self.project_tree.setUpdatesEnabled(True)
+
+    def _set_project_tree_loading(self) -> None:
+        if not hasattr(self, "project_tree"):
+            return
+        self.project_tree.clear()
+        item = QTreeWidgetItem(["Đang tải Project Explorer..."])
+        item.setIcon(0, icon("info", 17))
+        font = item.font(0); font.setItalic(True); item.setFont(0, font)
+        item.setForeground(0, QBrush(QColor("#666666")))
+        self.project_tree.addTopLevelItem(item)
 
     def _model_complete(self, model: dict[str, Any]) -> bool:
         nodes = {item.get("id"): item for item in model.get("nodes", [])}
@@ -2894,8 +2931,12 @@ class MainWindow(QMainWindow):
                 structural_links[source] += 1; structural_links[target] += 1
         return all(indicator_links.values()) and all(structural_links.values())
 
-    def _project_complete(self, state: dict[str, Any]) -> bool:
-        data_ids = {item.get("id") for item in state.get("data_files", []) if item.get("path") and Path(str(item.get("path"))).exists()}
+    def _project_complete(self, state: dict[str, Any], *, check_data_files: bool = True) -> bool:
+        data_ids = {
+            item.get("id")
+            for item in state.get("data_files", [])
+            if item.get("path") and (not check_data_files or Path(str(item.get("path"))).exists())
+        }
         models = state.get("models", [])
         return bool(models) and all(self._model_complete(item.get("model", {})) and item.get("data_file_id") in data_ids for item in models)
 
@@ -2984,7 +3025,17 @@ class MainWindow(QMainWindow):
         self.project_state["updated_at"] = datetime.now().isoformat(timespec="seconds")
 
     def _asset_path(self, name: str) -> Path:
-        return Path(__file__).resolve().parents[1] / "assets" / name
+        roots = [
+            Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1])),
+            Path(__file__).resolve().parents[1],
+            Path.cwd() / "PySmartPLS",
+            Path.cwd(),
+        ]
+        for root in roots:
+            candidate = root / "assets" / name
+            if candidate.exists():
+                return candidate
+        return roots[0] / "assets" / name
 
     def _mode_label(self, mode: str) -> str:
         return "Hình thành / Mode B" if mode == "formative" else "Phản ánh / Mode A"
@@ -2992,7 +3043,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         # If a nonlinear ML job is running, refuse to close (its worker is one long
         # blocking call that can't be interrupted) so Qt never destroys a live QThread.
-        if hasattr(self, "nonlinear") and self.nonlinear.has_running_job():
+        nonlinear = getattr(self, "nonlinear", None)
+        if nonlinear is not None and nonlinear.has_running_job():
             QMessageBox.information(
                 self, "Đang chạy tác vụ",
                 "Một tác vụ phân tích phi tuyến đang chạy. Hãy đợi hoàn tất trước khi đóng.")
@@ -3002,8 +3054,8 @@ class MainWindow(QMainWindow):
             self._save_current_silently()
         except OSError:
             pass
-        if hasattr(self, "nonlinear"):
-            self.nonlinear.shutdown()
+        if nonlinear is not None:
+            nonlinear.shutdown()
         super().closeEvent(event)
 
     def _apply_styles(self, theme: str = ui_theme.DEFAULT_THEME) -> None:

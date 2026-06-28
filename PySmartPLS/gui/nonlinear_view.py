@@ -525,6 +525,7 @@ class NonlinearWorkspace(QWidget):
         self._nav_buttons: dict[str, QToolButton] = {}
         self._result_stacks: dict[str, QStackedWidget] = {}
         self._result_bodies: dict[str, QVBoxLayout] = {}
+        self._stage_built: set[str] = set()
 
         root = QHBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
@@ -540,11 +541,41 @@ class NonlinearWorkspace(QWidget):
 
         self._stage_index: dict[str, int] = {}
         for key, label, icon_name, _hint in STAGES:
-            page = self._build_stage(key, label, icon_name)
+            page = self._stage_placeholder(label, icon_name)
             self._stage_index[key] = self.stack.addWidget(page)
 
         self._select_stage("data")
         self._refresh_gating()
+
+    def _stage_placeholder(self, label: str, icon_name: str) -> QWidget:
+        page = QWidget()
+        box = QVBoxLayout(page)
+        box.setAlignment(Qt.AlignCenter)
+        box.setSpacing(10)
+        chip = QLabel()
+        chip.setObjectName("NLEmptyChip")
+        chip.setFixedSize(72, 72)
+        chip.setAlignment(Qt.AlignCenter)
+        chip.setPixmap(icon(icon_name, 34).pixmap(34, 34))
+        box.addWidget(chip, 0, Qt.AlignHCenter)
+        title = QLabel(f"Đang mở {label}...")
+        title.setObjectName("NLEmptyTitle")
+        title.setAlignment(Qt.AlignCenter)
+        box.addWidget(title)
+        return page
+
+    def _ensure_stage_built(self, key: str) -> None:
+        if key in self._stage_built or key not in self._stage_index:
+            return
+        index = self._stage_index[key]
+        old_page = self.stack.widget(index)
+        label = next((item[1] for item in STAGES if item[0] == key), key)
+        icon_name = next((item[2] for item in STAGES if item[0] == key), "nonlinear")
+        page = self._build_deps_stage() if key == "deps" else self._build_stage(key, label, icon_name)
+        self.stack.removeWidget(old_page)
+        self.stack.insertWidget(index, page)
+        old_page.deleteLater()
+        self._stage_built.add(key)
 
     # ---- nav rail --------------------------------------------------------- #
     def _build_nav(self) -> QWidget:
@@ -1605,6 +1636,7 @@ class NonlinearWorkspace(QWidget):
     def _select_stage(self, key: str) -> None:
         if key in self._nav_buttons:
             self._nav_buttons[key].setChecked(True)
+        self._ensure_stage_built(key)
         if key in self._stage_index:
             self.stack.setCurrentIndex(self._stage_index[key])
         for i, (k, label, _icon, hint) in enumerate(STAGES):

@@ -23,7 +23,9 @@ from __future__ import annotations
 import io
 import math
 import os
+import site
 import sys
+import sysconfig
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -41,19 +43,46 @@ _BRIDGED = False
 
 def _candidate_site_packages() -> list[str]:
     """Best-effort locations of a same-version global CPython site-packages."""
+    major = sys.version_info.major
     minor = sys.version_info.minor
-    tag = f"Python3{minor}"  # e.g. Python313
+    tag = f"Python3{minor}"  # e.g. Python313 on Windows
+    unix_tag = f"python{major}.{minor}"
     candidates: list[str] = []
     override = os.environ.get("PYSMARTPLS_ML_SITE")
     if override:
         candidates.append(override)
+    try:
+        candidates.extend(site.getsitepackages())
+    except Exception:
+        pass
+    try:
+        candidates.append(site.getusersitepackages())
+    except Exception:
+        pass
+    for key in ("purelib", "platlib"):
+        path = sysconfig.get_paths().get(key)
+        if path:
+            candidates.append(path)
     local = os.environ.get("LOCALAPPDATA", "")
     if local:
         candidates.append(os.path.join(local, "Programs", "Python", tag, "Lib", "site-packages"))
     program_files = os.environ.get("PROGRAMFILES", r"C:\Program Files")
     candidates.append(os.path.join(program_files, tag, "Lib", "site-packages"))
     candidates.append(os.path.join("C:\\", tag, "Lib", "site-packages"))
-    return candidates
+    home = os.path.expanduser("~")
+    candidates.extend([
+        os.path.join(home, "Library", "Python", f"{major}.{minor}", "lib", unix_tag, "site-packages"),
+        os.path.join("/Library", "Frameworks", "Python.framework", "Versions", f"{major}.{minor}", "lib", unix_tag, "site-packages"),
+        os.path.join("/opt", "homebrew", "lib", unix_tag, "site-packages"),
+        os.path.join("/usr", "local", "lib", unix_tag, "site-packages"),
+    ])
+    seen: set[str] = set()
+    unique: list[str] = []
+    for path in candidates:
+        if path and path not in seen:
+            seen.add(path)
+            unique.append(path)
+    return unique
 
 
 def ensure_ml_libs() -> None:

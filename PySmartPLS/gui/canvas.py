@@ -4,7 +4,7 @@ import math
 import uuid
 from typing import Any
 
-from PySide6.QtCore import QSignalBlocker, QPointF, QRectF, Qt, QLineF
+from PySide6.QtCore import QEvent, QSignalBlocker, QPointF, QRectF, Qt, QLineF
 from PySide6.QtGui import QAction, QBrush, QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF, QTextOption, QTransform
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -1014,6 +1014,10 @@ class ModelCanvasView(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setBackgroundBrush(QBrush(QColor("#ffffff")))
+        self.grabGesture(Qt.PinchGesture)
+        self._zoom_factor = 1.0
+        self._min_zoom = 0.2
+        self._max_zoom = 5.0
         self._undo_stack: list[dict[str, Any]] = []
         self._redo_stack: list[dict[str, Any]] = []
         self._clipboard_model: dict[str, Any] = {"nodes": [], "connections": []}
@@ -1023,13 +1027,14 @@ class ModelCanvasView(QGraphicsView):
         self.setDragMode(QGraphicsView.RubberBandDrag if mode == "select" else QGraphicsView.NoDrag)
 
     def zoom_in(self) -> None:
-        self.scale(1.15, 1.15)
+        self._zoom_by(1.15)
 
     def zoom_out(self) -> None:
-        self.scale(1 / 1.15, 1 / 1.15)
+        self._zoom_by(1 / 1.15)
 
     def reset_zoom(self) -> None:
         self.resetTransform()
+        self._zoom_factor = 1.0
 
     def fit_model(self) -> None:
         rect = self.scene.itemsBoundingRect()
@@ -1037,6 +1042,49 @@ class ModelCanvasView(QGraphicsView):
             self.reset_zoom()
         else:
             self.fitInView(rect.adjusted(-60, -60, 60, 60), Qt.KeepAspectRatio)
+            self._sync_zoom_factor()
+
+    def _sync_zoom_factor(self) -> None:
+        self._zoom_factor = max(self._min_zoom, min(self._max_zoom, float(self.transform().m11() or 1.0)))
+
+    def _zoom_by(self, factor: float) -> None:
+        if factor <= 0:
+            return
+        target = max(self._min_zoom, min(self._max_zoom, self._zoom_factor * factor))
+        applied = target / self._zoom_factor if self._zoom_factor else target
+        if abs(applied - 1.0) < 0.001:
+            return
+        self.scale(applied, applied)
+        self._zoom_factor = target
+
+    def wheelEvent(self, event) -> None:
+        delta = event.angleDelta().y()
+        if delta == 0:
+            delta = event.pixelDelta().y()
+        if delta == 0:
+            event.ignore()
+            return
+        factor = 1.15 ** (delta / 120.0) if event.angleDelta().y() else 1.0015 ** delta
+        self._zoom_by(factor)
+        event.accept()
+
+    def event(self, event) -> bool:
+        if event.type() == QEvent.Gesture:
+            gesture = event.gesture(Qt.PinchGesture)
+            if gesture is not None:
+                factor = float(gesture.scaleFactor())
+                if factor > 0:
+                    self._zoom_by(factor)
+                    event.accept()
+                    return True
+        if event.type() == QEvent.NativeGesture:
+            gesture_type = getattr(event, "gestureType", lambda: None)()
+            if gesture_type == Qt.NativeGestureType.ZoomNativeGesture:
+                value = float(getattr(event, "value", lambda: 0.0)())
+                self._zoom_by(1.0 + value)
+                event.accept()
+                return True
+        return super().event(event)
 
     def delete_selected(self) -> None:
         if not self.scene.selectedItems():
