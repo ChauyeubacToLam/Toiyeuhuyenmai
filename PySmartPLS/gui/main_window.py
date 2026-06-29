@@ -50,13 +50,16 @@ from PySide6.QtWidgets import (
 )
 
 from core.data_manager import coerce_numeric_frame, export_cleaned_data, normalize_column_name, profile_dataset, read_dataset
+from core.data_screening import screen_dataset
 from core.pls_engine import ModelValidationError, PLSEngine
 from core.project_store import export_project_zip, import_project_zip, load_project, new_project_state, normalize_project_state, save_project
 from gui.canvas import ConnectionLine, IndicatorNode, LatentNode, ModelCanvasView
+from gui.data_screening_view import DataScreeningView
+from gui.data_table_model import clear_table, make_fast_table, set_dataframe
 from gui.dialogs import DataImportDialog, GroupDialog, NewProjectDialog, PLSSetupDialog, PredictDialog, PremiumDialog
 from gui.icons import icon
 from gui.nonlinear_view import NonlinearWorkspace
-from gui.results_view import BootstrapResultsWidget, PLSResultsWidget, fill_table, make_report_widget
+from gui.results_view import BootstrapResultsWidget, PLSResultsWidget, make_report_widget
 from gui import theme as ui_theme
 
 
@@ -209,6 +212,7 @@ def _build_data_view_payload(
         "profile": display,
         "correlations": correlations,
         "preview": frame.head(500).copy(),
+        "screening": screen_dataset(frame, used),
         "warnings": warnings,
         "best_text": best_text,
         "rows": len(frame),
@@ -464,6 +468,8 @@ class MainWindow(QMainWindow):
         self._calculation_running = False
         self._data_load_running = False
         self._data_view_dirty = False
+        self._data_payload: dict[str, Any] | None = None
+        self._rendered_subtabs: set[int] = set()
         self._project_tree_limit = 300
         self._project_panel_user_visible = True
         self._indicator_panel_user_visible = True
@@ -1186,13 +1192,15 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.data_warning_box)
 
         self.data_tabs = QTabWidget()
-        self.profile_table = QTableWidget()
-        self.profile_table.setAlternatingRowColors(True)
-        self.correlation_table = QTableWidget()
-        self.preview_table = QTableWidget()
-        self.data_tabs.addTab(self.profile_table, "Indicators")
-        self.data_tabs.addTab(self.correlation_table, "Indicator Correlations")
-        self.data_tabs.addTab(self.preview_table, "Raw File")
+        self.profile_table = make_fast_table("ProfileTable")
+        self.correlation_table = make_fast_table("CorrelationTable")
+        self.preview_table = make_fast_table("PreviewTable")
+        self.screening_view = DataScreeningView()
+        self.data_tabs.addTab(self.profile_table, "Chỉ báo (Indicators)")
+        self.data_tabs.addTab(self.correlation_table, "Tương quan")
+        self.data_tabs.addTab(self.preview_table, "Dữ liệu thô")
+        self.data_tabs.addTab(self.screening_view, "Sàng lọc dữ liệu")
+        self.data_tabs.currentChanged.connect(self._render_data_subtab)
         layout.addWidget(self.data_tabs, 1)
         copy_button = QPushButton("Copy to Clipboard")
         copy_button.clicked.connect(self.copy_data_table)
@@ -1523,6 +1531,13 @@ class MainWindow(QMainWindow):
         model = self._active_model_entry()
         if model:
             model["data_file_id"] = data_id
+        entry = self._active_data_entry()
+        if show_tab and entry and entry.get("path") and Path(entry["path"]).exists():
+            # Read + profile + screening run on a worker thread so clicking a
+            # data file in the tree no longer freezes the UI; the worker's
+            # callback updates the views, saves and refreshes the tree.
+            self._load_dataset(entry["path"], data_name=entry.get("name"), existing_id=data_id)
+            return
         self._load_active_data(show_tab=show_tab)
         self._save_current_silently()
         self.update_project_tree()
@@ -2122,31 +2137,6 @@ class MainWindow(QMainWindow):
         self._data_thread.finished.connect(self._data_worker.deleteLater)
         self._data_thread.finished.connect(self._data_thread.deleteLater)
         self._data_thread.start()
-        return
-        try:
-            loaded = read_dataset(path)
-            self.data_frame = loaded.frame
-            self.data_path = loaded.path
-            entry = next((item for item in self.project_state.get("data_files", []) if item.get("id") == existing_id), None)
-            if entry:
-                entry.update({"name": data_name or entry.get("name", Path(path).stem), "path": loaded.path, "rows": len(loaded.frame), "columns": len(loaded.frame.columns)})
-            else:
-                entry = {"id": str(uuid.uuid4()), "name": data_name or Path(path).stem, "path": loaded.path, "rows": len(loaded.frame), "columns": len(loaded.frame.columns)}
-                self.project_state.setdefault("data_files", []).append(entry)
-            self.current_data_id = entry["id"]
-            self.project_state["active_data_id"] = entry["id"]
-            model = self._active_model_entry()
-            if model:
-                model["data_file_id"] = entry["id"]
-            self._populate_indicators(self.data_frame.columns)
-            self.update_data_views(extra_warnings=loaded.warnings)
-            self.tabs.setTabText(1, f"{entry['name']}{Path(loaded.path).suffix}")
-            self._save_current_silently()
-            self.update_project_tree()
-            self._show_workspace_tab(1)
-            self.statusBar().showMessage(f"Đã nhập dữ liệu: {Path(path).name} ({self.data_frame.shape[0]} dòng)")
-        except Exception as exc:
-            QMessageBox.critical(self, "Nhập dữ liệu thất bại", str(exc))
 
     @Slot(object)
     def _on_dataset_loaded(self, result: dict[str, Any]) -> None:
@@ -2210,9 +2200,12 @@ class MainWindow(QMainWindow):
 
     def update_data_views(self, extra_warnings: list[str] | None = None, payload: dict[str, Any] | None = None) -> None:
         if self.data_frame is None:
-            self.profile_table.clear()
-            self.correlation_table.clear()
-            self.preview_table.clear()
+            clear_table(self.profile_table)
+            clear_table(self.correlation_table)
+            clear_table(self.preview_table)
+            self.screening_view.clear()
+            self._data_payload = None
+            self._rendered_subtabs.clear()
             self.data_warning_box.setPlainText("Chưa có dữ liệu.")
             self.best_correlation_label.setVisible(False)
             for key, value in (("Rows", "0"), ("Columns", "0"), ("Missing", "0")):
@@ -2221,74 +2214,55 @@ class MainWindow(QMainWindow):
             self._data_view_dirty = False
             return
 
-        if payload is not None:
-            fill_table(self.profile_table, payload["profile"])
-            self.profile_table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-            self.profile_table.verticalHeader().setDefaultSectionSize(24)
-            self.profile_table.horizontalHeader().setFixedHeight(28)
-            fill_table(self.correlation_table, payload["correlations"])
-            best_text = payload.get("best_text", "")
-            self.best_correlation_label.setText(best_text)
-            self.best_correlation_label.setVisible(bool(best_text))
-            fill_table(self.preview_table, payload["preview"])
-            self.data_meta_labels["Delimiter"].setText("Automatic")
-            self.data_meta_labels["Encoding"].setText("UTF-8")
-            self.data_meta_labels["Quote"].setText("Automatic")
-            self.data_meta_labels["Rows"].setText(str(payload.get("rows", len(self.data_frame))))
-            self.data_meta_labels["Format"].setText("Automatic")
-            self.data_meta_labels["Columns"].setText(str(payload.get("columns", len(self.data_frame.columns))))
-            self.data_meta_labels["MissingMarker"].setText("None")
-            self.data_meta_labels["Missing"].setText(str(payload.get("missing", int(self.data_frame.isna().sum().sum()))))
-            warnings = payload.get("warnings", [])
-            self.data_warning_box.setPlainText("\n".join(f"- {warning}" for warning in warnings) if warnings else "No data warnings.")
-            self._data_view_dirty = False
-            return
+        # Profiling, correlations and screening are computed in a worker thread
+        # (see DataLoadWorker); when that has not happened yet (e.g. data loaded
+        # silently for a calculation) build the payload here on demand.
+        if payload is None:
+            used = self.canvas_view.used_indicators() if hasattr(self, "canvas_view") else []
+            payload = _build_data_view_payload(self.data_frame, used, extra_warnings)
 
-        used = self.canvas_view.used_indicators() if hasattr(self, "canvas_view") else []
-        profile, warnings = profile_dataset(self.data_frame, used)
-        warnings = list(extra_warnings or []) + warnings
-        profile = profile.set_index("Tên biến")
-        display = pd.DataFrame(index=profile.index)
-        display["No."] = range(1, len(profile) + 1)
-        display["Missing"] = profile["Thiếu"]
-        display["Mean"] = profile["Trung bình"]
-        display["Median"] = profile["Trung vị"]
-        display["Min"] = profile["Min"]
-        display["Max"] = profile["Max"]
-        display["Standard Deviation"] = profile["Độ lệch chuẩn"]
-        display["Excess Kurtosis"] = profile["Kurtosis"]
-        display["Skewness"] = profile["Độ lệch"]
-        fill_table(self.profile_table, display)
-        self.profile_table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.profile_table.verticalHeader().setDefaultSectionSize(24)
-        self.profile_table.horizontalHeader().setFixedHeight(28)
-        numeric, _ = coerce_numeric_frame(self.data_frame)
-        if numeric.shape[1] > 200:
-            warnings.append("Correlation preview is limited to the first 200 variables to keep the UI responsive.")
-            numeric = numeric.iloc[:, :200]
-        correlations = numeric.corr()
-        fill_table(self.correlation_table, correlations)
-        best_text = ""
-        if correlations.shape[0] > 1:
-            mask = np.triu(np.ones(correlations.shape, dtype=bool), k=1)
-            values = correlations.where(mask).abs().stack()
-            if not values.empty:
-                left, right = values.idxmax()
-                best_text = f"<b>Best correlation</b><br>{left} → {right}: {correlations.loc[left, right]:.3f}"
+        self._data_payload = payload
+        self._rendered_subtabs.clear()
+
+        best_text = payload.get("best_text", "")
         self.best_correlation_label.setText(best_text)
         self.best_correlation_label.setVisible(bool(best_text))
-        fill_table(self.preview_table, self.data_frame.head(500))
         self.data_meta_labels["Delimiter"].setText("Automatic")
         self.data_meta_labels["Encoding"].setText("UTF-8")
         self.data_meta_labels["Quote"].setText("Automatic")
-        self.data_meta_labels["Rows"].setText(str(len(self.data_frame)))
+        self.data_meta_labels["Rows"].setText(str(payload.get("rows", len(self.data_frame))))
         self.data_meta_labels["Format"].setText("Automatic")
-        self.data_meta_labels["Columns"].setText(str(len(self.data_frame.columns)))
+        self.data_meta_labels["Columns"].setText(str(payload.get("columns", len(self.data_frame.columns))))
         self.data_meta_labels["MissingMarker"].setText("None")
-        self.data_meta_labels["Missing"].setText(str(int(self.data_frame.isna().sum().sum())))
+        self.data_meta_labels["Missing"].setText(str(payload.get("missing", int(self.data_frame.isna().sum().sum()))))
+        warnings = payload.get("warnings", [])
         self.data_warning_box.setPlainText("\n".join(f"- {warning}" for warning in warnings) if warnings else "Không có cảnh báo dữ liệu.")
 
+        # Only render the visible sub-tab now; the rest render lazily on click.
+        self._render_data_subtab(self.data_tabs.currentIndex())
         self._data_view_dirty = False
+
+    def _render_data_subtab(self, index: int) -> None:
+        payload = self._data_payload
+        if payload is None or index in self._rendered_subtabs:
+            return
+        if index == 0:
+            set_dataframe(self.profile_table, payload["profile"], show_index=True, decimals=4)
+        elif index == 1:
+            # Correlation matrix is read in variable order; skip the sort proxy
+            # so a large matrix renders instantly.
+            set_dataframe(self.correlation_table, payload["correlations"], show_index=True,
+                          decimals=3, sortable=False)
+        elif index == 2:
+            # Raw file view mirrors the source rows; sorting it is unnecessary
+            # and a sort proxy is the slowest part of a wide preview.
+            set_dataframe(self.preview_table, payload["preview"], show_index=False,
+                          decimals=4, sortable=False)
+        elif index == 3:
+            self.screening_view.set_result(payload.get("screening"))
+        else:
+            return
+        self._rendered_subtabs.add(index)
 
     def copy_data_table(self) -> None:
         if self.data_frame is None:

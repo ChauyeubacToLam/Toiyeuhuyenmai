@@ -62,14 +62,25 @@ class ConnectionLine(QGraphicsLineItem):
         self.update_position()
 
     def update_position(self) -> None:
-        if self.source_node and self.target_node:
+        if not (self.source_node and self.target_node):
+            return
+        try:
             start = self._node_rect(self.source_node).center()
             end = self._node_rect(self.target_node).center()
-            self.setLine(QLineF(start, end))
-            self.update_result_badge_position()
+        except RuntimeError:
+            return
+        self.setLine(QLineF(start, end))
+        self.update_result_badge_position()
 
     def update_result_badge_position(self) -> None:
         if not self.result_badge:
+            return
+        try:
+            if self.result_badge.scene() is None:
+                self.result_badge = None
+                return
+        except RuntimeError:
+            self.result_badge = None
             return
         line = self.line()
         p1, p2 = line.p1(), line.p2()
@@ -246,7 +257,11 @@ class BaseNode(QGraphicsItem):
         """Indicator nodes attached to this node through any connection."""
         result: list[IndicatorNode] = []
         for line in self.connections:
-            other = line.target_node if line.source_node is self else line.source_node
+            source = getattr(line, "source_node", None)
+            target = getattr(line, "target_node", None)
+            if not (source and target):
+                continue
+            other = target if source is self else source
             if isinstance(other, IndicatorNode) and other not in result:
                 result.append(other)
         return result
@@ -255,7 +270,11 @@ class BaseNode(QGraphicsItem):
         """Latent constructs this node is attached to through any connection."""
         result: list[LatentNode] = []
         for line in self.connections:
-            other = line.target_node if line.source_node is self else line.source_node
+            source = getattr(line, "source_node", None)
+            target = getattr(line, "target_node", None)
+            if not (source and target):
+                continue
+            other = target if source is self else source
             if isinstance(other, LatentNode) and other not in result:
                 result.append(other)
         return result
@@ -281,6 +300,9 @@ class BaseNode(QGraphicsItem):
             grid = getattr(self.scene(), "grid_size", 20)
             return QPointF(round(value.x() / grid) * grid, round(value.y() / grid) * grid)
         if change == QGraphicsItem.ItemPositionHasChanged:
+            scene = self.scene()
+            if scene and getattr(scene, "_deleting_items", False):
+                return super().itemChange(change, value)
             last = getattr(self, "_last_pos", None)
             self._last_pos = QPointF(value)
             # A construct owns its indicators: moving it carries the indicators along
@@ -301,7 +323,6 @@ class BaseNode(QGraphicsItem):
                         self._suppress_child_move = False
             for line in list(self.connections):
                 line.update_position()
-            scene = self.scene()
             if scene and hasattr(scene, "update_result_overlays"):
                 scene.update_result_overlays()
         if change == QGraphicsItem.ItemSelectedHasChanged:
@@ -582,6 +603,7 @@ class ModelCanvasScene(QGraphicsScene):
         self.grid_color = QColor("#e2e2e2")
         self._press_node: BaseNode | None = None
         self._drag_remembered = False
+        self._deleting_items = False
 
     def set_mode(self, mode: str) -> None:
         self.mode = mode
@@ -696,6 +718,8 @@ class ModelCanvasScene(QGraphicsScene):
             lines.update(line for line in list(node.connections) if self._is_live_model_item(line))
 
         blocker = QSignalBlocker(self)
+        previous_deleting = self._deleting_items
+        self._deleting_items = True
         try:
             self.clearSelection()
             self.clear_result_overlays()
@@ -706,6 +730,7 @@ class ModelCanvasScene(QGraphicsScene):
                 if node.scene() is self:
                     self.removeItem(node)
         finally:
+            self._deleting_items = previous_deleting
             del blocker
         self.refresh_node_status()
         self.update()
@@ -750,12 +775,15 @@ class ModelCanvasScene(QGraphicsScene):
         return result
 
     def _remove_line(self, line: ConnectionLine, refresh: bool = True) -> None:
-        if line.source_node:
-            line.source_node.remove_connection(line)
-            if isinstance(line.source_node, LatentNode):
-                line.source_node.apply_style()
-        if line.target_node:
-            line.target_node.remove_connection(line)
+        source = getattr(line, "source_node", None)
+        target = getattr(line, "target_node", None)
+        if source:
+            source.remove_connection(line)
+            if isinstance(source, LatentNode):
+                source.apply_style()
+        if target:
+            target.remove_connection(line)
+        line.result_badge = None
         if self._is_live_model_item(line):
             self.removeItem(line)
         line.source_node = None
@@ -771,8 +799,18 @@ class ModelCanvasScene(QGraphicsScene):
                 node.status_complete = True
                 node.apply_style()
                 continue
-            indicators = [line for line in node.connections if isinstance(line.target_node, IndicatorNode) or isinstance(line.source_node, IndicatorNode)]
-            structural = [line for line in node.connections if isinstance(line.source_node, LatentNode) and isinstance(line.target_node, LatentNode)]
+            live_connections = [
+                line for line in node.connections
+                if getattr(line, "source_node", None) and getattr(line, "target_node", None)
+            ]
+            indicators = [
+                line for line in live_connections
+                if isinstance(line.target_node, IndicatorNode) or isinstance(line.source_node, IndicatorNode)
+            ]
+            structural = [
+                line for line in live_connections
+                if isinstance(line.source_node, LatentNode) and isinstance(line.target_node, LatentNode)
+            ]
             node.status_complete = bool(indicators) and len(normal) > 1 and bool(structural)
             node.apply_style()
 
@@ -793,7 +831,10 @@ class ModelCanvasScene(QGraphicsScene):
 
     def serialize(self) -> dict[str, Any]:
         nodes = [item.to_dict() for item in self.items() if isinstance(item, BaseNode)]
-        connections = [item.to_dict() for item in self.items() if isinstance(item, ConnectionLine) and item.target_node]
+        connections = [
+            item.to_dict() for item in self.items()
+            if isinstance(item, ConnectionLine) and item.source_node and item.target_node
+        ]
         return {"nodes": nodes, "connections": connections}
 
     def load_model(self, model: dict[str, Any]) -> None:
@@ -883,7 +924,7 @@ class ModelCanvasScene(QGraphicsScene):
         r_square = results.get("r_square")
 
         for item in self.items():
-            if not isinstance(item, ConnectionLine) or not item.target_node:
+            if not isinstance(item, ConnectionLine) or not (item.source_node and item.target_node):
                 continue
             source = item.source_node
             target = item.target_node
@@ -952,7 +993,7 @@ class ModelCanvasScene(QGraphicsScene):
         indicator_positions: dict[str, tuple[float, float]] = {}
 
         for item in self.items():
-            if not isinstance(item, ConnectionLine) or not item.target_node:
+            if not isinstance(item, ConnectionLine) or not (item.source_node and item.target_node):
                 continue
             source = item.source_node
             target = item.target_node
@@ -1148,7 +1189,7 @@ class ModelCanvasView(QGraphicsView):
         nodes = [item.to_dict() for item in selected.values()]
         connections = [
             item.to_dict() for item in self.scene.items()
-            if isinstance(item, ConnectionLine) and item.target_node
+            if isinstance(item, ConnectionLine) and item.source_node and item.target_node
             and item.source_node.node_id in selected and item.target_node.node_id in selected
         ]
         self._clipboard_model = {"nodes": nodes, "connections": connections}
@@ -1209,7 +1250,10 @@ class ModelCanvasView(QGraphicsView):
         self.scene.addItem(note); note.setSelected(True)
 
     def _connect(self, source: BaseNode, target: BaseNode) -> None:
-        if any(line.source_node is source and line.target_node is target for line in source.connections):
+        if any(
+            getattr(line, "source_node", None) is source and getattr(line, "target_node", None) is target
+            for line in source.connections
+        ):
             return
         line = ConnectionLine(source, target)
         source.add_connection(line); target.add_connection(line); self.scene.addItem(line)
@@ -1329,7 +1373,11 @@ class ModelCanvasView(QGraphicsView):
         self._remember()
         for construct in constructs:
             for line in construct.connections:
-                indicator = line.target_node if line.source_node is construct else line.source_node
+                source = getattr(line, "source_node", None)
+                target = getattr(line, "target_node", None)
+                if not (source and target):
+                    continue
+                indicator = target if source is construct else source
                 if isinstance(indicator, IndicatorNode):
                     line.setVisible(visible)
                     indicator.setVisible(visible)
@@ -1352,9 +1400,13 @@ class ModelCanvasView(QGraphicsView):
     def _indicator_nodes(self, construct: LatentNode) -> list[IndicatorNode]:
         indicators: list[IndicatorNode] = []
         for line in construct.connections:
-            if line.source_node is construct and isinstance(line.target_node, IndicatorNode):
+            source = getattr(line, "source_node", None)
+            target = getattr(line, "target_node", None)
+            if not (source and target):
+                continue
+            if source is construct and isinstance(target, IndicatorNode):
                 indicator = line.target_node
-            elif line.target_node is construct and isinstance(line.source_node, IndicatorNode):
+            elif target is construct and isinstance(source, IndicatorNode):
                 indicator = line.source_node
             else:
                 continue

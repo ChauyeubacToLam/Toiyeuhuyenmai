@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QStackedWidget,
     QTableView,
     QTableWidget,
@@ -823,26 +824,24 @@ class PLSResultsWidget(QWidget):
         self.table.setModel(self._proxy_model)
         self.table.verticalHeader().setVisible(view.show_index)
         header = self.table.horizontalHeader()
-        header.setStretchLastSection(False)
-        header.setMinimumSectionSize(72)
-        if "Result" in column_labels:
-            for column, label in enumerate(column_labels):
-                if label == "No.":
-                    header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
-                elif label == "Result":
-                    header.setSectionResizeMode(column, QHeaderView.Stretch)
-                else:
-                    header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
-        elif cols <= 8:
-            for column in range(cols):
-                header.setSectionResizeMode(column, QHeaderView.Stretch)
-        else:
-            for column in range(cols):
-                header.setSectionResizeMode(column, QHeaderView.Interactive)
-            if rows <= 1000:
-                self.table.resizeColumnsToContents()
-            for column in range(cols):
-                self.table.setColumnWidth(column, min(max(self.table.columnWidth(column), 86), 220))
+        # Every column is drag-resizable (Interactive); the last one stretches so
+        # the table still fills the available width on load.
+        header.setStretchLastSection(True)
+        header.setMinimumSectionSize(56)
+        header.setDefaultSectionSize(120)
+        for column in range(cols):
+            header.setSectionResizeMode(column, QHeaderView.Interactive)
+        if 0 < rows <= 1000:
+            self.table.resizeColumnsToContents()
+        for column, label in enumerate(column_labels):
+            if label == "No.":
+                lo, hi = 52, 72
+            elif label == "Result":
+                lo, hi = 260, 620
+            else:
+                lo, hi = 96, 240
+            width = self.table.columnWidth(column)
+            self.table.setColumnWidth(column, min(max(width, lo), hi))
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
         self.table.verticalHeader().setDefaultSectionSize(24)
 
@@ -1082,6 +1081,11 @@ class BootstrapResultsWidget(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setWordWrap(False)
         self.table.setShowGrid(True)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.table.horizontalHeader().setHighlightSections(False)
         self.table.verticalHeader().setHighlightSections(False)
         self.table.horizontalHeader().setSectionsClickable(True)
@@ -1097,7 +1101,6 @@ class BootstrapResultsWidget(QWidget):
         self.hist_grid.setSpacing(10)
         self.hist_scroll.setWidget(self.hist_container)
         self.content_stack.addWidget(self.hist_scroll)
-        root.addWidget(self.content_stack, 1)
 
         self.empty_label = QLabel(_t("empty", self.lang))
         self.empty_label.setObjectName("EmptyResult")
@@ -1105,7 +1108,16 @@ class BootstrapResultsWidget(QWidget):
         root.addWidget(self.empty_label, 1)
 
         self.nav_panel = self._build_nav_panel()
-        root.addWidget(self.nav_panel)
+        self.body_splitter = QSplitter(Qt.Vertical)
+        self.body_splitter.setObjectName("ResultBodySplitter")
+        self.body_splitter.addWidget(self.content_stack)
+        self.body_splitter.addWidget(self.nav_panel)
+        self.body_splitter.setStretchFactor(0, 1)
+        self.body_splitter.setStretchFactor(1, 0)
+        self.body_splitter.setCollapsible(0, False)
+        self.body_splitter.setCollapsible(1, False)
+        self.body_splitter.setSizes([560, 170])
+        root.addWidget(self.body_splitter, 1)
         self._show_empty(True)
 
     def _build_nav_panel(self) -> QFrame:
@@ -1144,13 +1156,12 @@ class BootstrapResultsWidget(QWidget):
 
     def _show_empty(self, empty: bool) -> None:
         self.empty_label.setVisible(empty)
-        self.content_stack.setVisible(not empty)
+        self.body_splitter.setVisible(not empty)
         self.subtab_bar.setVisible(not empty)
         self.title_label.setVisible(not empty)
         self.copy_label.setVisible(not empty)
         self.copy_excel_button.setVisible(not empty)
         self.copy_r_button.setVisible(not empty)
-        self.nav_panel.setVisible(not empty)
 
     def load_results(self, results: dict[str, Any]) -> None:
         self.results = results
@@ -1232,25 +1243,35 @@ class BootstrapResultsWidget(QWidget):
         self.table.verticalHeader().setVisible(view.show_index)
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
-        header.setMinimumSectionSize(72)
-        if "Result" in column_labels:
-            for column, label in enumerate(column_labels):
-                if label == "Result":
-                    header.setSectionResizeMode(column, QHeaderView.Stretch)
-                else:
-                    header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
-        elif cols and cols <= 8:
-            for column in range(cols):
-                header.setSectionResizeMode(column, QHeaderView.Stretch)
-        else:
-            for column in range(cols):
-                header.setSectionResizeMode(column, QHeaderView.Interactive)
-            if 0 < rows <= 1000:
-                self.table.resizeColumnsToContents()
-            for column in range(cols):
-                self.table.setColumnWidth(column, min(max(self.table.columnWidth(column), 86), 220))
+        header.setMinimumSectionSize(56)
+        header.setDefaultSectionSize(120)
+        for column in range(cols):
+            header.setSectionResizeMode(column, QHeaderView.Interactive)
+        if 0 < rows <= 1000:
+            self.table.resizeColumnsToContents()
+        current_entry = self.entries.get(self.current_key)
+        is_samples_table = bool(current_entry and current_entry.kind == "stats" and self.current_subtab == "samples")
+        for column, label in enumerate(column_labels):
+            min_width, max_width = self._column_width_bounds(label, is_samples_table)
+            width = self.table.columnWidth(column)
+            self.table.setColumnWidth(column, min(max(width, min_width), max_width))
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
         self.table.verticalHeader().setDefaultSectionSize(24)
+
+    def _column_width_bounds(self, label: str, is_samples_table: bool) -> tuple[int, int]:
+        if label == "No.":
+            return 52, 72
+        if label == "Result":
+            return 260, 620
+        if is_samples_table:
+            return 96, 240
+        if "Standard Deviation" in label or "T Statistics" in label:
+            return 170, 280
+        if label in {"Original Sample (O)", "Sample Mean (M)"}:
+            return 150, 260
+        if label == "Bias":
+            return 96, 180
+        return 110, 240
 
     def _format(self, value: Any) -> str:
         if value is None:

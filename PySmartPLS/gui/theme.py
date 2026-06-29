@@ -407,6 +407,33 @@ def build_stylesheet(theme: str = DEFAULT_THEME) -> str:
     QLabel#DataMetaValue {{ color: {c['accent']}; font-size: 11pt; font-weight: 700; }}
     QLabel#EmptyResult {{ color: {c['muted']}; font-size: 12pt; }}
 
+    /* ---------- data screening view ---------- */
+    QScrollArea#ScreenScroll {{ background: {c['surface']}; border: 0; }}
+    QWidget#ScreenContent {{ background: {c['surface']}; }}
+    QLabel#ScreenEmpty {{ color: {c['muted']}; font-size: 11pt; padding: 40px; }}
+    QFrame#ScreenCard {{ background: {c['surface']}; border: 1px solid {c['border']};
+        border-radius: 14px; }}
+    QLabel#ScreenSectionTitle {{ color: {c['text']}; font-size: 11.5pt; font-weight: 800;
+        letter-spacing: 0.2px; }}
+    QLabel#ScreenSectionNote {{ color: {c['subtext']}; font-size: 9pt; }}
+    QFrame#ScreenChip {{ background: {c['surface_alt']}; border: 1px solid {c['border']};
+        border-radius: 12px; min-width: 96px; }}
+    QFrame#ScreenChip[tone="warning"] {{ background: {c['warning_soft']}; border-color: {c['warning']}; }}
+    QFrame#ScreenChip[tone="danger"] {{ background: {c['danger_soft']}; border-color: {c['danger']}; }}
+    QLabel#ScreenChipValue {{ color: {c['accent']}; font-size: 17pt; font-weight: 800; }}
+    QFrame#ScreenChip[tone="warning"] QLabel#ScreenChipValue {{ color: {c['warning']}; }}
+    QFrame#ScreenChip[tone="danger"] QLabel#ScreenChipValue {{ color: {c['danger']}; }}
+    QLabel#ScreenChipTitle {{ color: {c['subtext']}; font-size: 8.4pt; font-weight: 600; }}
+    QTableView#ScreenTable {{ background: {c['surface']}; color: {c['text']};
+        border: 1px solid {c['border']}; border-radius: 10px;
+        gridline-color: {c['divider']}; selection-background-color: {c['sel_bg']};
+        selection-color: {c['sel_text']}; }}
+    QTableView#ScreenTable::item {{ padding: 5px 8px; }}
+    QTextBrowser#ScreenInterpret, QTextBrowser#ScreenStrobe {{ background: {c['surface_alt']};
+        color: {c['text']}; border: 1px solid {c['border']}; border-radius: 10px;
+        padding: 10px 12px; font-size: 9.8pt; }}
+    QTextBrowser#ScreenStrobe {{ background: {c['accent_softer']}; }}
+
     /* ---------- inputs ---------- */
     QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QPlainTextEdit {{
         background: {c['surface']}; color: {c['text']};
