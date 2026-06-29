@@ -611,6 +611,7 @@ class ModelCanvasScene(QGraphicsScene):
         self._press_node: BaseNode | None = None
         self._drag_remembered = False
         self._deleting_items = False
+        self._retired_items: list[QGraphicsItem] = []
 
     def set_mode(self, mode: str) -> None:
         self.mode = mode
@@ -686,7 +687,7 @@ class ModelCanvasScene(QGraphicsScene):
                     source.apply_style()
                 self.refresh_node_status()
             else:
-                self.removeItem(self.temp_line)
+                self._retire_item(self.temp_line)
             self.temp_line = None
             return
         super().mouseReleaseEvent(event)
@@ -734,13 +735,33 @@ class ModelCanvasScene(QGraphicsScene):
                 self._remove_line(line, refresh=False)
             for node in nodes:
                 node.connections.clear()
-                if node.scene() is self:
-                    self.removeItem(node)
+                self._retire_item(node)
         finally:
             self._deleting_items = previous_deleting
             del blocker
         self.refresh_node_status()
         self.update()
+
+    def _retire_item(self, item: QGraphicsItem | None) -> None:
+        if item is None:
+            return
+        try:
+            item.setSelected(False)
+            item.setVisible(False)
+            item.setEnabled(False)
+            if item.scene() is self:
+                self.removeItem(item)
+            self._retired_items.append(item)
+        except RuntimeError:
+            return
+
+    def _retire_scene_items(self) -> None:
+        for item in list(self.items()):
+            try:
+                if item.parentItem() is None:
+                    self._retire_item(item)
+            except RuntimeError:
+                continue
 
     def _is_live_model_item(self, item: QGraphicsItem) -> bool:
         try:
@@ -792,7 +813,7 @@ class ModelCanvasScene(QGraphicsScene):
             target.remove_connection(line)
         line.result_badge = None
         if self._is_live_model_item(line):
-            self.removeItem(line)
+            self._retire_item(line)
         line.source_node = None
         line.target_node = None
         if refresh:
@@ -850,7 +871,7 @@ class ModelCanvasScene(QGraphicsScene):
             view.setUpdatesEnabled(False)
         previous_signal_state = self.blockSignals(True)
         try:
-            self.clear()
+            self._retire_scene_items()
             self.result_badges = []
             node_map: dict[str, BaseNode] = {}
             for node_data in model.get("nodes", []):
@@ -911,7 +932,7 @@ class ModelCanvasScene(QGraphicsScene):
                 item.r_square_badge = None
         for badge in list(self.result_badges):
             if badge.scene() is self:
-                self.removeItem(badge)
+                self._retire_item(badge)
         self.result_badges = []
 
     def update_result_overlays(self) -> None:
