@@ -2996,7 +2996,7 @@ class MainWindow(QMainWindow):
                 f"Tên: {item.name}",
                 f"Được gán cho: {', '.join(attached) if attached else 'chưa gán'}",
             ]
-        elif isinstance(item, ConnectionLine):
+        elif isinstance(item, ConnectionLine) and item.source_node and item.target_node:
             lines = [
                 "Đường dẫn",
                 f"Nguồn: {item.source_node.name}",

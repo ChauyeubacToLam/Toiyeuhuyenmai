@@ -675,27 +675,25 @@ class ModelCanvasScene(QGraphicsScene):
 
     def keyPressEvent(self, event) -> None:
         if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
-            self.delete_items(self.selectedItems(), remember=True)
+            self.delete_items(list(self.selectedItems()), remember=True)
             return
         super().keyPressEvent(event)
 
     def delete_items(self, items: list[QGraphicsItem], remember: bool = True) -> None:
-        items = [
-            item for item in list(items)
-            if isinstance(item, (BaseNode, ConnectionLine)) and item.scene() is self
-        ]
+        items = self._live_model_items(items)
         if not items:
             return
         if remember:
             self._remember_view()
         targets = [
             item for item in self._expand_with_owned_indicators(items)
-            if isinstance(item, (BaseNode, ConnectionLine)) and item.scene() is self
+            if self._is_live_model_item(item)
         ]
+        targets = self._dedupe_items(targets)
         nodes = [item for item in targets if isinstance(item, BaseNode)]
         lines = {item for item in targets if isinstance(item, ConnectionLine)}
         for node in nodes:
-            lines.update(line for line in list(node.connections) if line.scene() is self)
+            lines.update(line for line in list(node.connections) if self._is_live_model_item(line))
 
         blocker = QSignalBlocker(self)
         try:
@@ -711,6 +709,27 @@ class ModelCanvasScene(QGraphicsScene):
             del blocker
         self.refresh_node_status()
         self.update()
+
+    def _is_live_model_item(self, item: QGraphicsItem) -> bool:
+        try:
+            return isinstance(item, (BaseNode, ConnectionLine)) and item.scene() is self
+        except RuntimeError:
+            return False
+
+    def _live_model_items(self, items: list[QGraphicsItem]) -> list[QGraphicsItem]:
+        return self._dedupe_items([item for item in list(items) if self._is_live_model_item(item)])
+
+    @staticmethod
+    def _dedupe_items(items: list[QGraphicsItem]) -> list[QGraphicsItem]:
+        result: list[QGraphicsItem] = []
+        seen: set[int] = set()
+        for item in items:
+            marker = id(item)
+            if marker in seen:
+                continue
+            result.append(item)
+            seen.add(marker)
+        return result
 
     def _expand_with_owned_indicators(self, items: list[QGraphicsItem]) -> list[QGraphicsItem]:
         """Deleting a construct must also delete the indicators it owns (SmartPLS behavior).
@@ -737,7 +756,7 @@ class ModelCanvasScene(QGraphicsScene):
                 line.source_node.apply_style()
         if line.target_node:
             line.target_node.remove_connection(line)
-        if line.scene() is self:
+        if self._is_live_model_item(line):
             self.removeItem(line)
         line.source_node = None
         line.target_node = None
@@ -1087,10 +1106,11 @@ class ModelCanvasView(QGraphicsView):
         return super().event(event)
 
     def delete_selected(self) -> None:
-        if not self.scene.selectedItems():
+        selected = list(self.scene.selectedItems())
+        if not selected:
             return
         self._remember()
-        self.scene.delete_items(self.scene.selectedItems(), remember=False)
+        self.scene.delete_items(selected, remember=False)
 
     def _remember(self) -> None:
         self._undo_stack.append(self.model_state())
