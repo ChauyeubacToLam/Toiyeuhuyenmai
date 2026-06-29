@@ -4,7 +4,7 @@ import math
 import uuid
 from typing import Any
 
-from PySide6.QtCore import QEvent, QSignalBlocker, QPointF, QRectF, Qt, QLineF
+from PySide6.QtCore import QEvent, QSignalBlocker, QPointF, QRectF, Qt, QLineF, QTimer
 from PySide6.QtGui import QAction, QBrush, QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF, QTextOption, QTransform
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -356,7 +356,14 @@ class BaseNode(QGraphicsItem):
         if selected == rename_action:
             self.rename()
         elif selected == delete_action and self.scene():
-            self.scene().delete_items(list(self.scene().selectedItems()) or [self])
+            self.delete_from_context_menu()
+
+    def delete_from_context_menu(self) -> None:
+        scene = self.scene()
+        if not scene:
+            return
+        items = list(scene.selectedItems()) or [self]
+        QTimer.singleShot(0, lambda scene=scene, items=items: scene.delete_items(items))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -476,7 +483,7 @@ class LatentNode(BaseNode):
         export_clipboard = menu.addAction(icon("clipboard", 17), "Export as Image to Clipboard")
         selected = menu.exec(event.screenPos())
         if selected == delete_action and self.scene():
-            self.scene().delete_items(list(self.scene().selectedItems()))
+            self.delete_from_context_menu()
         elif selected == rename_action:
             self.rename()
         elif view and selected == moderating_action:
