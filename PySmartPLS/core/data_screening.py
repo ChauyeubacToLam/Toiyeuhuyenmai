@@ -287,7 +287,7 @@ def _fmt_num(value: float) -> str:
         return ""
     if float(value).is_integer():
         return str(int(value))
-    return f"{float(value):g}"
+    return f"{float(value):g}".replace(".", ",")
 
 
 def _interpretation_html(

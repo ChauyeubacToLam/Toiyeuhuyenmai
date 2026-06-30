@@ -2605,13 +2605,25 @@ class MainWindow(QMainWindow):
             return
         settings = dialog.get_settings()
         def finish(result: dict[str, Any]) -> None:
+            candidates = [
+                ("mv_pls", "MV Prediction Summary (PLS)", "final", result.get("mv_prediction"), "predict"),
+                ("mv_lm", "MV Prediction Summary (LM)", "final", result.get("mv_lm"), "predict"),
+                ("mv_cmp", "MV PLS vs LM (RMSE/MAE)", "final", result.get("mv_compare"), "predict"),
+                ("lv_pls", "LV Prediction Summary (PLS)", "quality", result.get("lv_prediction"), "predict"),
+                ("mv_err", "PLS MV Prediction Error (Descriptives)", "base", result.get("mv_error_desc"), None),
+                ("mv_prd", "PLS MV Predictions (Descriptives)", "base", result.get("mv_pred_desc"), None),
+                ("lv_err", "PLS LV Prediction Error (Descriptives)", "base", result.get("lv_error_desc"), None),
+                ("lv_prd", "PLS LV Predictions (Descriptives)", "base", result.get("lv_pred_desc"), None),
+            ]
             sections = [
-                {"key": "lv", "title": "LV Prediction Summary", "category": "quality", "frame": result["lv_prediction"], "color": "predict"},
-                {"key": "mv", "title": "MV Prediction Summary", "category": "final", "frame": result["mv_prediction"], "color": "predict"},
+                {"key": key, "title": title, "category": cat, "frame": frame, "color": color}
+                for key, title, cat, frame, color in candidates
+                if frame is not None and not frame.empty
             ]
             self._open_analysis_report(make_report_widget(sections), "PLS Predict")
+            note = "" if result.get("has_lm") else " — không có biến ngoại sinh nên bỏ qua benchmark LM"
             self.statusBar().showMessage(
-                f"Đã chạy PLS Predict ({result['folds']} folds × {result['repetitions']} lần lặp)"
+                f"Đã chạy PLS Predict ({result['folds']} folds × {result['repetitions']} lần lặp){note}"
             )
 
         self._start_analysis_task("PLS Predict", engine, "calculate_predict", (settings,), finish)

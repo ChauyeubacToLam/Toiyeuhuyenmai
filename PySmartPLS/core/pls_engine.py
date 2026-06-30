@@ -281,12 +281,14 @@ class PLSEngine:
         reps = max(1, int(settings.get("repetitions", 10)))
         rng = np.random.default_rng(int(settings.get("random_seed", 12345)))
 
-        sse = {ind: 0.0 for _lv, ind in endo_pairs}
-        abse = {ind: 0.0 for _lv, ind in endo_pairs}
-        sso = {ind: 0.0 for _lv, ind in endo_pairs}
-        sse_lm = {ind: 0.0 for _lv, ind in endo_pairs}
-        abse_lm = {ind: 0.0 for _lv, ind in endo_pairs}
-        count = {ind: 0 for _lv, ind in endo_pairs}
+        # Per-case accumulators (averaged across repetitions) so the holdout
+        # predictions and errors can be described exactly like SmartPLS.
+        pred_sum = {ind: np.zeros(n) for _lv, ind in endo_pairs}
+        pred_cnt = {ind: np.zeros(n) for _lv, ind in endo_pairs}
+        pred_sum_lm = {ind: np.zeros(n) for _lv, ind in endo_pairs}
+        lv_pred_sum = {lv: np.zeros(n) for lv in endogenous}
+        lv_actual_sum = {lv: np.zeros(n) for lv in endogenous}
+        lv_cnt = {lv: np.zeros(n) for lv in endogenous}
 
         for _rep in range(reps):
             for test_idx in self._kfold(n, k, rng):
@@ -323,61 +325,106 @@ class PLSEngine:
                             acc = acc + beta * fhat.get(s, fscore[s])
                         fhat[lv] = acc
 
+                # Construct (LV) level: structural prediction vs measurement score.
+                for lv in endogenous:
+                    lv_pred_sum[lv][test_idx] += fhat[lv]
+                    lv_actual_sum[lv][test_idx] += fscore[lv]
+                    lv_cnt[lv][test_idx] += 1.0
+
+                # Indicator (MV) level: reconstruct each endogenous item.
                 for lv in endogenous:
                     for ind in indicators[lv]:
                         loading = _corr(ztr[ind], scores_tr[lv])
                         sd_ind = float(sd.get(ind)) if pd.notna(sd.get(ind)) and sd.get(ind) else 1.0
                         x_pred = loading * fhat[lv] * sd_ind + float(mu[ind])
-                        actual = test[ind].to_numpy(dtype=float)
-                        err = actual - x_pred
-                        sse[ind] += float(np.sum(err ** 2))
-                        abse[ind] += float(np.sum(np.abs(err)))
-                        sso[ind] += float(np.sum((actual - float(mu[ind])) ** 2))
-                        count[ind] += len(actual)
+                        pred_sum[ind][test_idx] += x_pred
+                        pred_cnt[ind][test_idx] += 1.0
 
                 if exo_inds:
                     x_train = np.column_stack([np.ones(len(train)), train[exo_inds].to_numpy(dtype=float)])
                     x_test = np.column_stack([np.ones(len(test)), test[exo_inds].to_numpy(dtype=float)])
                     for _lv, ind in endo_pairs:
                         beta_lm, *_ = np.linalg.lstsq(x_train, train[ind].to_numpy(dtype=float), rcond=None)
-                        err_lm = test[ind].to_numpy(dtype=float) - x_test @ beta_lm
-                        sse_lm[ind] += float(np.sum(err_lm ** 2))
-                        abse_lm[ind] += float(np.sum(np.abs(err_lm)))
+                        pred_sum_lm[ind][test_idx] += x_test @ beta_lm
 
-        mv_rows = []
+        def _avg(total: np.ndarray, cnt: np.ndarray) -> np.ndarray:
+            out = np.full(n, np.nan)
+            mask = cnt > 0
+            out[mask] = total[mask] / cnt[mask]
+            return out
+
+        # ---- Indicator (MV) level ---------------------------------------
+        mv_pls_rows, mv_lm_rows, mv_cmp_rows = [], [], []
+        mv_err_cols: dict[str, np.ndarray] = {}
+        mv_val_cols: dict[str, np.ndarray] = {}
         for lv, ind in endo_pairs:
-            c = count[ind] or 1
-            rmse = float(np.sqrt(sse[ind] / c))
-            mae = float(abse[ind] / c)
-            q2 = float(1 - sse[ind] / sso[ind]) if sso[ind] > 0 else np.nan
-            lm_rmse = float(np.sqrt(sse_lm[ind] / c)) if exo_inds else np.nan
-            lm_mae = float(abse_lm[ind] / c) if exo_inds else np.nan
-            mv_rows.append({
-                "Indicator": ind, "Construct": lv, "Q²predict": q2,
-                "PLS-SEM_RMSE": rmse, "PLS-SEM_MAE": mae,
-                "LM_RMSE": lm_rmse, "LM_MAE": lm_mae,
-                "RMSE (PLS-LM)": rmse - lm_rmse if exo_inds else np.nan,
-            })
-        mv_table = pd.DataFrame(mv_rows).set_index("Indicator")
+            cnt = pred_cnt[ind]
+            actual_full = data[ind].to_numpy(dtype=float)
+            avg_pred = _avg(pred_sum[ind], cnt)
+            mask = (cnt > 0) & np.isfinite(avg_pred) & np.isfinite(actual_full)
+            actual, pred = actual_full[mask], avg_pred[mask]
+            pls = _pred_metrics(actual, pred)
+            mv_pls_rows.append({"Indicator": ind, "Construct": lv,
+                                "RMSE": pls["rmse"], "MAE": pls["mae"],
+                                "MAPE": pls["mape"], "Q²predict": pls["q2"]})
+            mv_err_cols[ind] = actual - pred
+            mv_val_cols[ind] = pred
+            if exo_inds:
+                avg_lm = _avg(pred_sum_lm[ind], cnt)
+                m2 = mask & np.isfinite(avg_lm)
+                lm = _pred_metrics(data[ind].to_numpy(dtype=float)[m2], avg_lm[m2])
+                mv_lm_rows.append({"Indicator": ind, "Construct": lv,
+                                   "RMSE": lm["rmse"], "MAE": lm["mae"],
+                                   "MAPE": lm["mape"], "Q²predict": lm["q2"]})
+                mv_cmp_rows.append({"Indicator": ind, "Construct": lv,
+                                    "PLS-SEM_RMSE": pls["rmse"], "LM_RMSE": lm["rmse"],
+                                    "RMSE (PLS-LM)": pls["rmse"] - lm["rmse"],
+                                    "PLS-SEM_MAE": pls["mae"], "LM_MAE": lm["mae"],
+                                    "MAE (PLS-LM)": pls["mae"] - lm["mae"]})
 
+        mv_table = pd.DataFrame(mv_pls_rows).set_index("Indicator")
+        mv_lm_table = pd.DataFrame(mv_lm_rows).set_index("Indicator") if mv_lm_rows else pd.DataFrame()
+        mv_cmp_table = pd.DataFrame(mv_cmp_rows).set_index("Indicator") if mv_cmp_rows else pd.DataFrame()
+        mv_err_desc = pd.DataFrame(
+            {ind: _describe(arr) for ind, arr in mv_err_cols.items()}
+        ).T if mv_err_cols else pd.DataFrame()
+        mv_val_desc = pd.DataFrame(
+            {ind: _describe(arr) for ind, arr in mv_val_cols.items()}
+        ).T if mv_val_cols else pd.DataFrame()
+
+        # ---- Construct (LV) level ---------------------------------------
         lv_rows = []
+        lv_err_cols: dict[str, np.ndarray] = {}
+        lv_val_cols: dict[str, np.ndarray] = {}
         for lv in endogenous:
-            block = indicators[lv]
-            s = sum(sse[i] for i in block)
-            o = sum(sso[i] for i in block)
-            a = sum(abse[i] for i in block)
-            c = sum(count[i] for i in block) or 1
-            lv_rows.append({
-                "Construct": lv,
-                "Q²predict": float(1 - s / o) if o > 0 else np.nan,
-                "RMSE": float(np.sqrt(s / c)),
-                "MAE": float(a / c),
-            })
+            cnt = lv_cnt[lv]
+            avg_pred = _avg(lv_pred_sum[lv], cnt)
+            avg_actual = _avg(lv_actual_sum[lv], cnt)
+            mask = (cnt > 0) & np.isfinite(avg_pred) & np.isfinite(avg_actual)
+            actual, pred = avg_actual[mask], avg_pred[mask]
+            m = _pred_metrics(actual, pred)
+            lv_rows.append({"Construct": lv, "RMSE": m["rmse"], "MAE": m["mae"], "Q²predict": m["q2"]})
+            lv_err_cols[lv] = actual - pred
+            lv_val_cols[lv] = pred
         lv_table = pd.DataFrame(lv_rows).set_index("Construct")
+        lv_err_desc = pd.DataFrame(
+            {lv: _describe(arr) for lv, arr in lv_err_cols.items()}
+        ).T if lv_err_cols else pd.DataFrame()
+        lv_val_desc = pd.DataFrame(
+            {lv: _describe(arr) for lv, arr in lv_val_cols.items()}
+        ).T if lv_val_cols else pd.DataFrame()
+
         return {
             "algorithm": "PLSpredict",
             "mv_prediction": mv_table,
+            "mv_lm": mv_lm_table,
+            "mv_compare": mv_cmp_table,
+            "mv_error_desc": mv_err_desc,
+            "mv_pred_desc": mv_val_desc,
             "lv_prediction": lv_table,
+            "lv_error_desc": lv_err_desc,
+            "lv_pred_desc": lv_val_desc,
+            "has_lm": bool(exo_inds),
             "folds": k,
             "repetitions": reps,
             "diagnostics": context.warnings,
@@ -1848,6 +1895,51 @@ def _corr_array(a_values: np.ndarray, b_values: np.ndarray) -> float:
     if denom <= 0 or not np.isfinite(denom):
         return 0.0
     return float((a_centered @ b_centered) / denom)
+
+
+def _pred_metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, float]:
+    """RMSE / MAE / MAPE / Q²predict for a holdout prediction (mean = naive benchmark)."""
+    actual = np.asarray(actual, dtype=float)
+    predicted = np.asarray(predicted, dtype=float)
+    if actual.size == 0:
+        return {"rmse": np.nan, "mae": np.nan, "mape": np.nan, "q2": np.nan}
+    err = actual - predicted
+    rmse = float(np.sqrt(np.mean(err ** 2)))
+    mae = float(np.mean(np.abs(err)))
+    nz = np.abs(actual) > 1e-12
+    mape = float(np.mean(np.abs(err[nz] / actual[nz])) * 100.0) if nz.any() else np.nan
+    sso = float(np.sum((actual - float(np.mean(actual))) ** 2))
+    q2 = float(1.0 - float(np.sum(err ** 2)) / sso) if sso > 0 else np.nan
+    return {"rmse": rmse, "mae": mae, "mape": mape, "q2": q2}
+
+
+def _describe(values: np.ndarray) -> dict[str, float]:
+    """SmartPLS-style descriptive statistics for a 1-D array of predictions or errors."""
+    v = np.asarray(values, dtype=float)
+    v = v[np.isfinite(v)]
+    keys = ["Mean", "Median", "Minimum", "Maximum",
+            "Standard Deviation", "Skewness", "Excess Kurtosis", "Observations"]
+    if v.size == 0:
+        return {k: (0.0 if k == "Observations" else np.nan) for k in keys}
+    mean = float(np.mean(v))
+    sd = float(np.std(v, ddof=1)) if v.size > 1 else 0.0
+    if sd > 0 and v.size > 2:
+        z = (v - mean) / sd
+        skew = float(np.mean(z ** 3))
+        kurt = float(np.mean(z ** 4) - 3.0)
+    else:
+        skew = np.nan
+        kurt = np.nan
+    return {
+        "Mean": mean,
+        "Median": float(np.median(v)),
+        "Minimum": float(np.min(v)),
+        "Maximum": float(np.max(v)),
+        "Standard Deviation": sd,
+        "Skewness": skew,
+        "Excess Kurtosis": kurt,
+        "Observations": float(v.size),
+    }
 
 
 def _effects_array(path_coefficients: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

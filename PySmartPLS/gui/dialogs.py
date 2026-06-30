@@ -398,7 +398,7 @@ class PLSSetupDialog(PremiumDialog):
         self.tabs.addTab(self._algorithm_tab(), "Thuật toán")
         self.tabs.addTab(self._bootstrap_tab(), "Bootstrap")
         self.tabs.addTab(self._planned_tab("Blindfolding / Q²", "Stone-Geisser Q² sẽ được bổ sung ở mô-đun phân tích tiếp theo."), "Blindfolding")
-        self.tabs.addTab(self._planned_tab("PLSpredict", "Chỉ số dự báo kiểm định chéo sẽ được bổ sung sau khi ổn định bootstrap."), "PLSpredict")
+        self.tabs.addTab(self._planned_tab("PLSpredict", "Đã hỗ trợ đầy đủ. Mở từ menu Tính toán → PLS Predict: kiểm định chéo k-fold ngoài mẫu với RMSE, MAE, MAPE, Q²predict ở cấp chỉ báo (MV) và biến tiềm ẩn (LV), so sánh benchmark LM và thống kê mô tả sai số/dự báo."), "PLSpredict")
         self.tabs.addTab(self._planned_tab("MGA / MICOM", "So sánh nhóm sẽ được bật sau khi có trình chọn biến nhóm."), "MGA/MICOM")
         self.tabs.addTab(self._advanced_tab(), "Nâng cao")
         self.add_widget(self.tabs, 1)

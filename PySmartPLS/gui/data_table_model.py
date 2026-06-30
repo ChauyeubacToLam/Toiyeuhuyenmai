@@ -20,7 +20,7 @@ import pandas as pd
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableView
 
-from gui.results_view import ResultSortProxyModel, _sort_value, _stringify
+from gui.results_view import ResultSortProxyModel, _format_decimal, _sort_value, _stringify
 
 
 def _format_cell(value: Any, decimals: int) -> str:
@@ -39,7 +39,7 @@ def _format_cell(value: Any, decimals: int) -> str:
         number = float(value)
         if not np.isfinite(number):
             return ""
-        return f"{number:.{decimals}f}"
+        return _format_decimal(number, decimals)
     return str(value)
 
 

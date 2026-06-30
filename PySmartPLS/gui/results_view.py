@@ -43,6 +43,13 @@ VIF_GREEN_MAX = 3.0
 VIF_RED_MIN = 5.0
 HTMT_GREEN_MAX = 0.85
 HTMT_RED_MIN = 0.90
+DECIMAL_SEPARATOR = ","
+
+
+def _format_decimal(value: Any, decimals: int) -> str:
+    """Format a numeric display value with the app's decimal separator."""
+
+    return f"{float(value):.{decimals}f}".replace(".", DECIMAL_SEPARATOR)
 
 # ----------------------------------------------------------------------------
 # Bilingual strings
@@ -553,7 +560,7 @@ def _boot_setting_table(results: dict[str, Any]) -> pd.DataFrame:
         "Valid Subsamples": meta.get("valid", ""),
         "Confidence Interval Method": str(meta.get("ci_method", "percentile")).capitalize(),
         "Test Type": meta.get("test_type", "two-tailed"),
-        "Significance Level": f"{(1 - confidence):.2f}",
+        "Significance Level": _format_decimal(1 - confidence, 2),
         "Confidence Level": f"{confidence:.0%}",
         "Random Seed": meta.get("seed", ""),
         "Sample Size": results.get("n_observations", ""),
@@ -575,8 +582,8 @@ def build_bootstrap_report(results: dict[str, Any]) -> dict[str, BootstrapEntry]
     confidence = float(meta.get("confidence", results.get("bootstrap_confidence", 0.95)))
     lower_pct = (1 - confidence) / 2 * 100
     upper_pct = 100 - lower_pct
-    lo_label = f"{lower_pct:.1f}%"
-    hi_label = f"{upper_pct:.1f}%"
+    lo_label = f"{_format_decimal(lower_pct, 1)}%"
+    hi_label = f"{_format_decimal(upper_pct, 1)}%"
 
     # Base-data (plain) tables come straight from the PLS result.
     entries["setting"].frame = _boot_setting_table(results)
@@ -1130,7 +1137,7 @@ class PLSResultsWidget(QWidget):
                 return ""
             if self.hide_zeros and number == 0:
                 return ""
-            return f"{number:.{self.decimals}f}"
+            return _format_decimal(number, self.decimals)
         if isinstance(value, float) and pd.isna(value):
             return ""
         text = str(value)
@@ -1173,7 +1180,8 @@ class PLSResultsWidget(QWidget):
         if mode == "predict":
             if col_label.startswith("Q²"):
                 return LOAD_GOOD if number >= 0 else LOAD_BAD
-            elif col_label.startswith("RMSE (PLS"):
+            elif col_label.startswith("RMSE (PLS") or col_label.startswith("MAE (PLS"):
+                # PLS error below the linear-model benchmark → better predictive power
                 return LOAD_GOOD if number < 0 else LOAD_BAD
             return None
         if mode == "mga":
@@ -1579,7 +1587,7 @@ class BootstrapResultsWidget(QWidget):
                 return ""
             if self.hide_zeros and number == 0:
                 return ""
-            return f"{number:.{self.decimals}f}"
+            return _format_decimal(number, self.decimals)
         text = str(value)
         return "" if text in {"nan", "NaN", "None"} else text
 
@@ -1796,7 +1804,7 @@ def _format_plain(value: Any) -> str:
     if pd.isna(value):
         return ""
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return f"{float(value):.4f}"
+        return _format_decimal(value, 4)
     return str(value)
 
 
@@ -1833,7 +1841,7 @@ def export_tables_to_html(tables: dict[str, pd.DataFrame], path: str, results: d
     ]
     for title, frame in tables.items():
         parts.append(f"<h2>{title}</h2>")
-        parts.append(frame.to_html(float_format=lambda value: f"{value:.4f}", border=0, na_rep=""))
+        parts.append(frame.to_html(float_format=lambda value: _format_decimal(value, 4), border=0, na_rep=""))
     parts.append("</body></html>")
     Path(path).write_text("\n".join(parts), encoding="utf-8")
 

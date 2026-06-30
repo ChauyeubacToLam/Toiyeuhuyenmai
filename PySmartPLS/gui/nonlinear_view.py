@@ -15,6 +15,7 @@ object-names defined in ``gui/theme.py``.
 """
 from __future__ import annotations
 
+import math
 import time
 import traceback
 from pathlib import Path
@@ -53,6 +54,7 @@ from PySide6.QtWidgets import (
 
 from gui.dialogs import PremiumDialog
 from gui.icons import icon
+from gui.results_view import _format_decimal
 from gui.theme import MONO_FAMILY, apply_shadow
 
 STAGES = [
@@ -83,9 +85,37 @@ DEP_PURPOSE = {
 # --------------------------------------------------------------------------- #
 def _fmt(value: float, digits: int = 4) -> str:
     try:
-        return f"{float(value):.{digits}f}"
+        number = float(value)
     except (TypeError, ValueError):
         return str(value)
+    if not math.isfinite(number):
+        return ""
+    return _format_decimal(number, digits)
+
+
+def _fmt_sig(value: float, digits: int = 4) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if not math.isfinite(number):
+        return ""
+    return f"{number:.{digits}g}".replace(".", ",")
+
+
+def _fmt_auto(value: Any, digits: int = 4) -> str:
+    if isinstance(value, bool):
+        return str(value)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if not math.isfinite(number):
+        return ""
+    if number.is_integer():
+        return str(int(number))
+    text = f"{number:.{digits}f}".rstrip("0").rstrip(".")
+    return text.replace(".", ",")
 
 
 def metric_chip(text: str, tone: str = "default") -> QLabel:
@@ -1086,7 +1116,7 @@ class NonlinearWorkspace(QWidget):
         self._add_result(key, metric_card)
 
         param_card, pbox = _section_card("Tham số tối ưu", f"{result['n_fits']:,} lần fit")
-        prows = [[str(k), str(v)] for k, v in result["best_params"].items()]
+        prows = [[str(k), _fmt_auto(v)] for k, v in result["best_params"].items()]
         pbox.addWidget(result_table(["Tham số", "Giá trị"], prows))
         self._add_result(key, param_card)
 
@@ -1131,7 +1161,7 @@ class NonlinearWorkspace(QWidget):
         chips.setSpacing(8)
         chips.addWidget(QLabel("Quan trọng nhất:"))
         for name, pct in importance[:3]:
-            chips.addWidget(metric_chip(f"{name} · {pct:.1f}%", "info"))
+            chips.addWidget(metric_chip(f"{name} · {_fmt(pct, 1)}%", "info"))
         chips.addStretch()
         self._add_result(key, chips_host)
 
@@ -1142,7 +1172,7 @@ class NonlinearWorkspace(QWidget):
                 self._add_result(key, chart_card(title, result["figures"][fig_key]))
 
         table_card, tbox = _section_card("Bảng tầm quan trọng", "% đóng góp")
-        rows = [[name, f"{pct:.2f}%"] for name, pct in importance]
+        rows = [[name, f"{_fmt(pct, 2)}%"] for name, pct in importance]
         tbox.addWidget(result_table(["Biến", "Đóng góp"], rows))
         self._add_result(key, table_card)
         self._show_results(key)
@@ -1230,11 +1260,11 @@ class NonlinearWorkspace(QWidget):
         hbox.addWidget(eq)
         chips = QHBoxLayout()
         chips.setSpacing(8)
-        chips.addWidget(metric_chip(f"R² = {result['r2']:.4f}", _r2_tone(result["r2"])))
+        chips.addWidget(metric_chip(f"R² = {_fmt(result['r2'], 4)}", _r2_tone(result["r2"])))
         if result["table"]:
             best = min(result["table"], key=lambda r: r["loss"])
             chips.addWidget(metric_chip(f"Độ phức tạp {best['complexity']}", "info"))
-            chips.addWidget(metric_chip(f"Loss {best['loss']:.4g}", "muted"))
+            chips.addWidget(metric_chip(f"Loss {_fmt_sig(best['loss'], 4)}", "muted"))
         chips.addStretch()
         hbox.addLayout(chips)
         self._add_result(key, hero)
@@ -1244,8 +1274,8 @@ class NonlinearWorkspace(QWidget):
 
         if result["table"]:
             tcard, tbox = _section_card("Bảng tiến hóa", "Pareto front")
-            rows = [[str(r["complexity"]), f"{r['loss']:.5g}",
-                     (f"{r['score']:.4g}" if r["score"] == r["score"] else "—"), r["equation"]]
+            rows = [[str(r["complexity"]), _fmt_sig(r["loss"], 5),
+                     (_fmt_sig(r["score"], 4) if r["score"] == r["score"] else "—"), r["equation"]]
                     for r in result["table"]]
             table = result_table(["Độ phức tạp", "Loss", "Score", "Biểu thức"], rows)
             table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Interactive)
@@ -1302,7 +1332,7 @@ class NonlinearWorkspace(QWidget):
         top = max(table, key=lambda r: r["ST"]) if table else {"feature": "—", "ST": 0}
         total_inter = sum(r["ST"] - r["S1"] for r in table)
         cards = [
-            stat_card("Nhạy nhất (ST)", top["feature"], "accent", foot=f"ST = {top['ST']:.3f}"),
+            stat_card("Nhạy nhất (ST)", top["feature"], "accent", foot=f"ST = {_fmt(top['ST'], 3)}"),
             stat_card("Tổng tương tác", _fmt(total_inter, 3), foot="ΣST − ΣS1"),
         ]
         self._add_result(key, self._stat_row(cards))
@@ -1375,7 +1405,7 @@ class NonlinearWorkspace(QWidget):
 
         cfg_card, cbox = _section_card("Cấu hình tối ưu", result["method"])
         feats = list(result["max_vars"].keys())
-        rows = [[f, str(result["max_vars"][f]), str(result["min_vars"][f])] for f in feats]
+        rows = [[f, _fmt_auto(result["max_vars"][f]), _fmt_auto(result["min_vars"][f])] for f in feats]
         cbox.addWidget(result_table(["Biến", "Tại MAX", "Tại MIN"], rows))
         self._add_result(key, cfg_card)
 

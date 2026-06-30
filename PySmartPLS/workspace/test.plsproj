@@ -2,7 +2,7 @@
   "app_version": "0.3.0",
   "name": "test",
   "created_at": "2026-06-28T11:36:14",
-  "updated_at": "2026-06-29T16:04:18",
+  "updated_at": "2026-06-29T23:17:47",
   "workspace": "",
   "data_path": "E:\\dw mới\\1. CRT.csv",
   "model": {
@@ -182,39 +182,6 @@
         "name": "AAC3",
         "x": 789.0390294232586,
         "y": 258.71110467550307
-      },
-      {
-        "id": "fab33a6c-2ee1-4170-9c87-5a6f0174979b",
-        "type": "latent",
-        "name": "ATP",
-        "x": 1003.1637277739699,
-        "y": 858.4177784457086,
-        "mode": "reflective",
-        "weighting": "automatic",
-        "color": "",
-        "effect_type": "",
-        "effect_refs": {}
-      },
-      {
-        "id": "619b9bb3-0599-4a71-a97f-c5cdc24491a0",
-        "type": "indicator",
-        "name": "ATP1",
-        "x": 851.1637277739699,
-        "y": 848.4177784457086
-      },
-      {
-        "id": "9b1e0b96-877f-4cd4-ab63-95309249cc4e",
-        "type": "indicator",
-        "name": "ATP2",
-        "x": 850.5850532382963,
-        "y": 770.124559906619
-      },
-      {
-        "id": "c218206c-b8cd-4c22-900f-de0a07d9b677",
-        "type": "indicator",
-        "name": "ATP3",
-        "x": 851.1637277739699,
-        "y": 936.4177784457086
       },
       {
         "id": "f4e750ea-db5e-48f0-8392-582a178c828d",
@@ -479,10 +446,6 @@
       },
       {
         "source": "a5e99bd1-debe-45c2-accb-a71587e138aa",
-        "target": "fab33a6c-2ee1-4170-9c87-5a6f0174979b"
-      },
-      {
-        "source": "a5e99bd1-debe-45c2-accb-a71587e138aa",
         "target": "e21e8bab-c0a2-40d2-bec2-d5c11b6c32d1"
       },
       {
@@ -504,18 +467,6 @@
       {
         "source": "e21e8bab-c0a2-40d2-bec2-d5c11b6c32d1",
         "target": "3fcbc5a0-a52c-4d91-b7aa-6a2c84a011ca"
-      },
-      {
-        "source": "fab33a6c-2ee1-4170-9c87-5a6f0174979b",
-        "target": "619b9bb3-0599-4a71-a97f-c5cdc24491a0"
-      },
-      {
-        "source": "fab33a6c-2ee1-4170-9c87-5a6f0174979b",
-        "target": "9b1e0b96-877f-4cd4-ab63-95309249cc4e"
-      },
-      {
-        "source": "fab33a6c-2ee1-4170-9c87-5a6f0174979b",
-        "target": "c218206c-b8cd-4c22-900f-de0a07d9b677"
       },
       {
         "source": "f4e750ea-db5e-48f0-8392-582a178c828d",
@@ -607,14 +558,6 @@
       },
       {
         "source": "e21e8bab-c0a2-40d2-bec2-d5c11b6c32d1",
-        "target": "b7a89899-0a60-4fb6-b15d-91aaa9f80132"
-      },
-      {
-        "source": "fab33a6c-2ee1-4170-9c87-5a6f0174979b",
-        "target": "f4e750ea-db5e-48f0-8392-582a178c828d"
-      },
-      {
-        "source": "fab33a6c-2ee1-4170-9c87-5a6f0174979b",
         "target": "b7a89899-0a60-4fb6-b15d-91aaa9f80132"
       },
       {
@@ -818,39 +761,6 @@
             "name": "AAC3",
             "x": 789.0390294232586,
             "y": 258.71110467550307
-          },
-          {
-            "id": "fab33a6c-2ee1-4170-9c87-5a6f0174979b",
-            "type": "latent",
-            "name": "ATP",
-            "x": 1003.1637277739699,
-            "y": 858.4177784457086,
-            "mode": "reflective",
-            "weighting": "automatic",
-            "color": "",
-            "effect_type": "",
-            "effect_refs": {}
-          },
-          {
-            "id": "619b9bb3-0599-4a71-a97f-c5cdc24491a0",
-            "type": "indicator",
-            "name": "ATP1",
-            "x": 851.1637277739699,
-            "y": 848.4177784457086
-          },
-          {
-            "id": "9b1e0b96-877f-4cd4-ab63-95309249cc4e",
-            "type": "indicator",
-            "name": "ATP2",
-            "x": 850.5850532382963,
-            "y": 770.124559906619
-          },
-          {
-            "id": "c218206c-b8cd-4c22-900f-de0a07d9b677",
-            "type": "indicator",
-            "name": "ATP3",
-            "x": 851.1637277739699,
-            "y": 936.4177784457086
           },
           {
             "id": "f4e750ea-db5e-48f0-8392-582a178c828d",
@@ -1115,10 +1025,6 @@
           },
           {
             "source": "a5e99bd1-debe-45c2-accb-a71587e138aa",
-            "target": "fab33a6c-2ee1-4170-9c87-5a6f0174979b"
-          },
-          {
-            "source": "a5e99bd1-debe-45c2-accb-a71587e138aa",
             "target": "e21e8bab-c0a2-40d2-bec2-d5c11b6c32d1"
           },
           {
@@ -1140,18 +1046,6 @@
           {
             "source": "e21e8bab-c0a2-40d2-bec2-d5c11b6c32d1",
             "target": "3fcbc5a0-a52c-4d91-b7aa-6a2c84a011ca"
-          },
-          {
-            "source": "fab33a6c-2ee1-4170-9c87-5a6f0174979b",
-            "target": "619b9bb3-0599-4a71-a97f-c5cdc24491a0"
-          },
-          {
-            "source": "fab33a6c-2ee1-4170-9c87-5a6f0174979b",
-            "target": "9b1e0b96-877f-4cd4-ab63-95309249cc4e"
-          },
-          {
-            "source": "fab33a6c-2ee1-4170-9c87-5a6f0174979b",
-            "target": "c218206c-b8cd-4c22-900f-de0a07d9b677"
           },
           {
             "source": "f4e750ea-db5e-48f0-8392-582a178c828d",
@@ -1243,14 +1137,6 @@
           },
           {
             "source": "e21e8bab-c0a2-40d2-bec2-d5c11b6c32d1",
-            "target": "b7a89899-0a60-4fb6-b15d-91aaa9f80132"
-          },
-          {
-            "source": "fab33a6c-2ee1-4170-9c87-5a6f0174979b",
-            "target": "f4e750ea-db5e-48f0-8392-582a178c828d"
-          },
-          {
-            "source": "fab33a6c-2ee1-4170-9c87-5a6f0174979b",
             "target": "b7a89899-0a60-4fb6-b15d-91aaa9f80132"
           },
           {
