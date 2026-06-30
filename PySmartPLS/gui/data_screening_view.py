@@ -45,7 +45,7 @@ def _clear_layout(layout) -> None:
 def _fit_table_height(view, n_rows: int, cap: int = 340) -> None:
     height = _HEADER_HEIGHT + max(n_rows, 1) * _ROW_HEIGHT + 8
     view.setMinimumHeight(min(height, cap))
-    view.setMaximumHeight(min(height, cap))
+    view.setMaximumHeight(16777215)
 
 
 class DataScreeningView(QWidget):

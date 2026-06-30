@@ -531,6 +531,8 @@ def main():
         app.setWindowIcon(app_icon)
     
     app.setStyle("Fusion")
+    if sys.platform == "darwin":
+        app.setFont(QFont(app_font_family(), 11))
 
     windows = {}
 

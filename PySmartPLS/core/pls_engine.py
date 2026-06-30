@@ -1007,6 +1007,7 @@ class PLSEngine:
         f_square = self._f_square(analysis_scores, r2, analysis_structural)
         inner_vif = self._inner_vif(analysis_scores, analysis_structural)
         outer_loadings = self._outer_loadings(context.z, scores, context)
+        outer_vif = self._outer_vif(context.z, context)
         outer_weights = self._outer_weights_frame(weights, context)
         reliability = self._reliability(context.z, outer_loadings, context, weights)
         lv_correlations = scores.corr()
@@ -1041,6 +1042,7 @@ class PLSEngine:
             "adjusted_r_square": pd.Series(adjusted_r2, name="Adjusted R2"),
             "f_square": f_square,
             "inner_vif": inner_vif,
+            "outer_vif": outer_vif,
             "outer_loadings": outer_loadings,
             "outer_weights": outer_weights,
             "reliability": reliability,
@@ -1347,6 +1349,19 @@ class PLSEngine:
                     vif = 1 / (1 - r2) if r2 < 1 else np.inf
                 rows.append({"Target": target, "Predictor": source, "VIF": vif})
         return pd.DataFrame(rows).set_index(["Target", "Predictor"]) if rows else pd.DataFrame(columns=["VIF"])
+
+    def _outer_vif(self, z: pd.DataFrame, context: FitContext) -> pd.DataFrame:
+        rows: list[dict[str, Any]] = []
+        for construct, indicators in context.indicators.items():
+            for indicator in indicators:
+                others = [candidate for candidate in indicators if candidate != indicator]
+                if not others:
+                    vif = 1.0
+                else:
+                    _, r2, _, _ = _ols(z[others], z[indicator])
+                    vif = 1 / (1 - r2) if r2 < 1 else np.inf
+                rows.append({"Indicator": indicator, "Construct": construct, "VIF": vif})
+        return pd.DataFrame(rows).set_index("Indicator") if rows else pd.DataFrame(columns=["Construct", "VIF"])
 
     def _effects(self, path_coefficients: pd.DataFrame, lvs: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
         b = path_coefficients.loc[lvs, lvs].to_numpy(dtype=float)

@@ -431,14 +431,16 @@ def result_table(headers: list[str], rows: list[list[str]]) -> QTableWidget:
     table.setSelectionMode(QTableWidget.NoSelection)
     table.setShowGrid(False)
     two_col = len(headers) == 2
-    if two_col:
-        # Key/value: key hugs the left, value sits right next to it (not far right).
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-    else:
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in range(1, len(headers)):
-            table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
+    table.horizontalHeader().setMinimumSectionSize(56)
+    table.horizontalHeader().setDefaultSectionSize(128)
+    for col in range(len(headers)):
+        table.horizontalHeader().setSectionResizeMode(col, QHeaderView.Interactive)
+        if two_col and col == 0:
+            table.setColumnWidth(col, 180)
+        elif two_col:
+            table.setColumnWidth(col, 280)
+        else:
+            table.setColumnWidth(col, 150)
     for r, row in enumerate(rows):
         for col, value in enumerate(row):
             item = QTableWidgetItem(str(value))
@@ -447,8 +449,11 @@ def result_table(headers: list[str], rows: list[list[str]]) -> QTableWidget:
                 item.setTextAlignment(align | Qt.AlignVCenter)
             table.setItem(r, col, item)
     table.resizeRowsToContents()
+    table.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
+    table.verticalHeader().setDefaultSectionSize(28)
     height = table.horizontalHeader().height() + sum(table.rowHeight(r) for r in range(len(rows))) + 8
-    table.setFixedHeight(min(height, 360))
+    table.setMinimumHeight(min(height, 360))
+    table.setMaximumHeight(16777215)
     return table
 
 
@@ -959,8 +964,9 @@ class NonlinearWorkspace(QWidget):
         rows = [[_fmt(preview.iloc[r, c], 3) for c in range(len(headers))]
                 for r in range(len(preview))]
         table = result_table(headers, rows)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        table.setFixedHeight(360)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        table.setMinimumHeight(360)
+        table.setMaximumHeight(16777215)
         box.addWidget(table)
         self._add_result(key, card)
         self._show_results(key)
@@ -1242,7 +1248,8 @@ class NonlinearWorkspace(QWidget):
                      (f"{r['score']:.4g}" if r["score"] == r["score"] else "—"), r["equation"]]
                     for r in result["table"]]
             table = result_table(["Độ phức tạp", "Loss", "Score", "Biểu thức"], rows)
-            table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+            table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Interactive)
+            table.setColumnWidth(3, max(table.columnWidth(3), 360))
             tbox.addWidget(table)
             self._add_result(key, tcard)
         self._show_results(key)

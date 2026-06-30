@@ -16,6 +16,7 @@ Public API
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -49,6 +50,18 @@ DEFAULT_THEME = "classic"  # Premium Light (royal blue) — the app default.
 
 FONT_FAMILY = '"Segoe UI", "Inter", "Helvetica Neue", Arial, sans-serif'
 MONO_FAMILY = '"Cascadia Code", "Consolas", "SF Mono", monospace'
+MAC_FONT_SCALE = 1.18
+
+
+def _scale_qss_font_sizes(style: str) -> str:
+    if sys.platform != "darwin":
+        return style
+
+    def repl(match: re.Match[str]) -> str:
+        value = float(match.group(1)) * MAC_FONT_SCALE
+        return f"font-size: {value:.1f}pt"
+
+    return re.sub(r"font-size:\s*([0-9]+(?:\.[0-9]+)?)pt", repl, style)
 
 
 # --------------------------------------------------------------------------- #
@@ -284,7 +297,7 @@ def apply_shadow(widget: QWidget, *, blur: int = 28, y: int = 8, x: int = 0,
 def build_stylesheet(theme: str = DEFAULT_THEME) -> str:
     c = palette(theme)
     a = ensure_qss_assets(theme)
-    return f"""
+    style = f"""
     /* ---------- base ---------- */
     * {{ outline: 0; }}
     QWidget {{
@@ -569,11 +582,19 @@ def build_stylesheet(theme: str = DEFAULT_THEME) -> str:
         border-bottom: 2px solid {c['accent']};
         border-top-left-radius: 10px; border-top-right-radius: 10px; }}
     QLabel#MatrixTabText {{ color: {c['accent']}; font-weight: 700; }}
-    QTableWidget#ResultTable {{ background: {c['surface']}; color: {c['text']};
+    QFrame#ResultSubtabBar {{ background: transparent; border: 0; }}
+    QPushButton#ResultSubtab {{ background: {c['surface']}; color: {c['text']};
+        border: 1px solid {c['border_strong']}; border-bottom: 1px solid {c['border']};
+        border-radius: 0; padding: 8px 16px; font-weight: 600; }}
+    QPushButton#ResultSubtab:hover {{ background: {c['surface_alt']}; color: {c['accent']}; }}
+    QPushButton#ResultSubtab:checked {{ background: {c['surface']}; color: {c['accent']};
+        border-bottom: 2px solid {c['accent']}; }}
+    QPushButton#ResultSubtab:disabled {{ color: {c['muted']}; background: {c['surface_sunken']}; }}
+    QTableWidget#ResultTable, QTableView#ResultTable {{ background: {c['surface']}; color: {c['text']};
         border: 1px solid {c['border']}; border-radius: 12px;
         gridline-color: {c['divider']}; alternate-background-color: {c['surface_alt']}; }}
-    QTableWidget#ResultTable::item {{ padding: 6px 10px; }}
-    QTableWidget#ResultTable::item:selected {{ background: {c['sel_bg']}; color: {c['sel_text']}; }}
+    QTableWidget#ResultTable::item, QTableView#ResultTable::item {{ padding: 6px 10px; }}
+    QTableWidget#ResultTable::item:selected, QTableView#ResultTable::item:selected {{ background: {c['sel_bg']}; color: {c['sel_text']}; }}
     QFrame#ResultNav {{ background: {c['surface_alt']}; border: 1px solid {c['border']};
         border-radius: 12px; }}
     QLabel#NavHeader {{ color: {c['subtext']}; font-weight: 800; font-size: 8.4pt;
@@ -768,3 +789,4 @@ def build_stylesheet(theme: str = DEFAULT_THEME) -> str:
     QFrame#NLIntroCtaBar {{ background: {c['accent2_softer']};
         border: 1px solid {c['accent2_soft']}; border-radius: 11px; }}
     """
+    return _scale_qss_font_sizes(style)

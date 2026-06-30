@@ -99,7 +99,9 @@ def make_fast_table(object_name: str = "") -> QTableView:
     view.horizontalHeader().setHighlightSections(False)
     view.verticalHeader().setHighlightSections(False)
     view.horizontalHeader().setSectionsClickable(True)
-    view.verticalHeader().setDefaultSectionSize(24)
+    view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+    view.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
+    view.verticalHeader().setDefaultSectionSize(28)
     return view
 
 
@@ -136,13 +138,10 @@ def set_dataframe(view: QTableView, frame: pd.DataFrame | None, *,
     header.setStretchLastSection(False)
     header.setMinimumSectionSize(56)
     columns = 0 if frame is None else len(frame.columns)
-    if columns and columns <= stretch_threshold:
-        for column in range(columns):
-            header.setSectionResizeMode(column, QHeaderView.Stretch)
-    else:
-        header.setDefaultSectionSize(default_width)
-        for column in range(columns):
-            header.setSectionResizeMode(column, QHeaderView.Interactive)
+    header.setDefaultSectionSize(default_width)
+    for column in range(columns):
+        header.setSectionResizeMode(column, QHeaderView.Interactive)
+        view.setColumnWidth(column, default_width)
     return model
 
 

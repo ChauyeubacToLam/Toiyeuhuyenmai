@@ -33,10 +33,16 @@ from PySide6.QtWidgets import (
 
 from gui.icons import icon
 
-# Text colours used by SmartPLS for reflective loadings (green = good, red = below threshold).
-LOAD_GOOD = QColor("#1b7f3b")
-LOAD_BAD = QColor("#c0182c")
+# Text colours used by SmartPLS for quality criteria (green = pass, red = fail).
+LOAD_GOOD = QColor("#00b050")
+LOAD_BAD = QColor("#c00000")
 LOADING_THRESHOLD = 0.7
+AVE_THRESHOLD = 0.5
+RELIABILITY_MIN = 0.7
+VIF_GREEN_MAX = 3.0
+VIF_RED_MIN = 5.0
+HTMT_GREEN_MAX = 0.85
+HTMT_RED_MIN = 0.90
 
 # ----------------------------------------------------------------------------
 # Bilingual strings
@@ -105,10 +111,24 @@ def _result_name(key: str, lang: str) -> str:
 # Builders: turn the raw engine result dict into display frames + colour mode.
 # ----------------------------------------------------------------------------
 class ResultView:
-    def __init__(self, frame: pd.DataFrame | None, color: str | None = None, show_index: bool = True):
+    def __init__(
+        self,
+        frame: pd.DataFrame | None,
+        color: str | None = None,
+        show_index: bool = True,
+        tabs: list[tuple[str, str, "ResultView"]] | None = None,
+        chart: str | None = None,
+    ):
         self.frame = frame
         self.color = color
         self.show_index = show_index
+        self.tabs = tabs or []
+        self.chart = chart
+
+    def available(self) -> bool:
+        if self.frame is not None:
+            return True
+        return any(view.available() for _key, _label, view in self.tabs)
 
 
 class SortableTableWidgetItem(QTableWidgetItem):
@@ -199,6 +219,11 @@ def _lvs(results: dict[str, Any]) -> list[str]:
     return list(mm.keys())
 
 
+def matrix_frame(results: dict[str, Any], key: str) -> pd.DataFrame | None:
+    value = results.get(key)
+    return value if isinstance(value, pd.DataFrame) and not value.empty else None
+
+
 def _loadings_matrix(results: dict[str, Any]) -> pd.DataFrame | None:
     mm = results.get("measurement_model") or {}
     ol = results.get("outer_loadings")
@@ -243,6 +268,32 @@ def _f_square_matrix(results: dict[str, Any]) -> pd.DataFrame | None:
     return mat
 
 
+def _lower_triangle(frame: pd.DataFrame | None, *, diagonal: bool) -> pd.DataFrame | None:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return None
+    table = frame.copy()
+    rows = list(table.index)
+    cols = list(table.columns)
+    for row_i, row in enumerate(rows):
+        for col_i, col in enumerate(cols):
+            if col_i > row_i or (not diagonal and col_i == row_i):
+                table.loc[row, col] = np.nan
+    return table
+
+
+def _outer_vif_table(results: dict[str, Any]) -> pd.DataFrame | None:
+    vif = results.get("outer_vif")
+    if not isinstance(vif, pd.DataFrame) or vif.empty:
+        return None
+    if "VIF" in vif.columns:
+        return vif[["VIF"]].copy()
+    if vif.shape[1] == 1:
+        table = vif.copy()
+        table.columns = ["VIF"]
+        return table
+    return None
+
+
 def _vif_matrix(results: dict[str, Any]) -> pd.DataFrame | None:
     vif = results.get("inner_vif")
     lvs = _lvs(results)
@@ -255,6 +306,14 @@ def _vif_matrix(results: dict[str, Any]) -> pd.DataFrame | None:
             if predictor in mat.index and target in mat.columns:
                 mat.loc[predictor, target] = float(row.get("VIF", np.nan))
     return mat
+
+
+def _fornell_larcker_table(results: dict[str, Any]) -> pd.DataFrame | None:
+    return _lower_triangle(results.get("fornell_larcker"), diagonal=True)
+
+
+def _htmt_table(results: dict[str, Any]) -> pd.DataFrame | None:
+    return _lower_triangle(results.get("htmt"), diagonal=False)
 
 
 def _r_square_table(results: dict[str, Any]) -> pd.DataFrame | None:
@@ -280,6 +339,35 @@ def _reliability_table(results: dict[str, Any]) -> pd.DataFrame | None:
     }
     columns = [column for column in rename if column in rel.columns]
     return rel[columns].rename(columns=rename)
+
+
+def _discriminant_view(results: dict[str, Any]) -> ResultView:
+    fornell = ResultView(_fornell_larcker_table(results))
+    cross = ResultView(matrix_frame(results, "cross_loadings"))
+    htmt = ResultView(_htmt_table(results), color="htmt")
+    htmt_chart = ResultView(_htmt_table(results), color="htmt", show_index=True, chart="htmt")
+    return ResultView(
+        fornell.frame,
+        tabs=[
+            ("fornell", "Fornell-Larcker Criterion", fornell),
+            ("cross_loadings", "Cross Loadings", cross),
+            ("htmt", "Heterotrait-Monotrait Ratio (HTMT)", htmt),
+            ("htmt_chart", "Heterotrait-Monotrait Ratio (HTMT) Chart", htmt_chart),
+        ],
+    )
+
+
+def _vif_view(results: dict[str, Any]) -> ResultView:
+    outer = ResultView(_outer_vif_table(results), color="vif")
+    inner = ResultView(_vif_matrix(results), color="vif")
+    return ResultView(
+        outer.frame if outer.frame is not None else inner.frame,
+        color="vif",
+        tabs=[
+            ("outer_vif", "Outer VIF Values", outer),
+            ("inner_vif", "Inner VIF Values", inner),
+        ],
+    )
 
 
 def _model_fit_table(results: dict[str, Any]) -> pd.DataFrame | None:
@@ -313,8 +401,7 @@ def build_views(results: dict[str, Any]) -> dict[str, ResultView]:
     views: dict[str, ResultView] = {}
 
     def matrix(key: str) -> pd.DataFrame | None:
-        value = results.get(key)
-        return value if isinstance(value, pd.DataFrame) and not value.empty else None
+        return matrix_frame(results, key)
 
     views["path_coefficients"] = ResultView(matrix("path_coefficients"))
     views["indirect_effects"] = ResultView(matrix("indirect_effects"))
@@ -325,9 +412,9 @@ def build_views(results: dict[str, Any]) -> dict[str, ResultView]:
     views["residuals"] = ResultView(None)
     views["r_square"] = ResultView(_r_square_table(results))
     views["f_square"] = ResultView(_f_square_matrix(results))
-    views["reliability"] = ResultView(_reliability_table(results))
-    views["discriminant"] = ResultView(matrix("fornell_larcker"))
-    views["vif"] = ResultView(_vif_matrix(results))
+    views["reliability"] = ResultView(_reliability_table(results), color="reliability")
+    views["discriminant"] = _discriminant_view(results)
+    views["vif"] = _vif_view(results)
     views["model_fit"] = ResultView(_model_fit_table(results))
     views["model_selection"] = ResultView(None)
     views["stop_criterion"] = ResultView(_stop_criterion_table(results))
@@ -647,6 +734,107 @@ class HistogramPlot(QWidget):
 # ----------------------------------------------------------------------------
 # Main results widget — SmartPLS style.
 # ----------------------------------------------------------------------------
+class HTMTChart(QWidget):
+    """SmartPLS-style HTMT bar chart with 0.85 and 0.90 reference lines."""
+
+    def __init__(self, frame: pd.DataFrame | None, parent=None):
+        super().__init__(parent)
+        self.frame = frame if frame is not None else pd.DataFrame()
+        values = self._values()
+        self.setMinimumSize(max(760, len(values) * 34 + 120), 420)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    def _values(self) -> list[tuple[str, float]]:
+        if self.frame.empty:
+            return []
+        values: list[tuple[str, float]] = []
+        rows = list(self.frame.index)
+        cols = list(self.frame.columns)
+        for row_i, row in enumerate(rows):
+            for col_i, col in enumerate(cols):
+                if col_i >= row_i:
+                    continue
+                try:
+                    value = float(self.frame.loc[row, col])
+                except (TypeError, ValueError):
+                    continue
+                if np.isfinite(value):
+                    values.append((f"{row}_{col}", value))
+        return values
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt signature)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.fillRect(self.rect(), QColor("#ffffff"))
+
+        values = self._values()
+        if not values:
+            painter.setPen(QColor("#64748b"))
+            painter.drawText(self.rect(), int(Qt.AlignCenter), "No HTMT values available")
+            painter.end()
+            return
+
+        left, top, right, bottom = 62, 44, 22, 92
+        plot = QRectF(left, top, max(1, self.width() - left - right), max(1, self.height() - top - bottom))
+        max_value = max(max(value for _label, value in values), HTMT_RED_MIN, 1.0)
+        max_axis = min(1.2, max(1.0, float(np.ceil(max_value * 10) / 10)))
+
+        painter.setPen(QColor("#111827"))
+        title_font = QFont()
+        title_font.setPointSize(13)
+        title_font.setBold(True)
+        painter.setFont(title_font)
+        painter.drawText(QRectF(0, 6, self.width(), 28), int(Qt.AlignCenter), "Heterotrait-Monotrait Ratio (HTMT)")
+
+        axis_font = QFont()
+        axis_font.setPointSize(8)
+        painter.setFont(axis_font)
+        for tick in np.arange(0.0, max_axis + 0.001, 0.1):
+            y = plot.bottom() - (tick / max_axis) * plot.height()
+            painter.setPen(QPen(QColor("#d7dce3"), 1, Qt.DotLine))
+            painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+            painter.setPen(QColor("#334155"))
+            painter.drawText(QRectF(6, y - 8, left - 12, 16), int(Qt.AlignRight | Qt.AlignVCenter), f"{tick:.1f}")
+
+        for threshold, color in ((HTMT_GREEN_MAX, "#6478ff"), (HTMT_RED_MIN, "#c00000")):
+            if threshold <= max_axis:
+                y = plot.bottom() - (threshold / max_axis) * plot.height()
+                painter.setPen(QPen(QColor(color), 1.4))
+                painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+
+        painter.setPen(QPen(QColor("#94a3b8"), 1))
+        painter.drawLine(QPointF(plot.left(), plot.top()), QPointF(plot.left(), plot.bottom()))
+        painter.drawLine(QPointF(plot.left(), plot.bottom()), QPointF(plot.right(), plot.bottom()))
+
+        slot = plot.width() / max(len(values), 1)
+        bar_w = max(8.0, min(28.0, slot * 0.62))
+        for i, (label, value) in enumerate(values):
+            x = plot.left() + i * slot + (slot - bar_w) / 2
+            bar_h = (value / max_axis) * plot.height()
+            y = plot.bottom() - bar_h
+            if value >= HTMT_RED_MIN:
+                fill = QColor("#ff3b30")
+                edge = QColor("#b91c1c")
+            elif value > HTMT_GREEN_MAX:
+                fill = QColor("#f59e0b")
+                edge = QColor("#b45309")
+            else:
+                fill = QColor("#00d414")
+                edge = QColor("#00a80f")
+            painter.setPen(QPen(edge, 1))
+            painter.setBrush(fill)
+            painter.drawRect(QRectF(x, y, bar_w, bar_h))
+
+            painter.save()
+            painter.translate(x + bar_w / 2, plot.bottom() + 10)
+            painter.rotate(-58)
+            painter.setPen(QColor("#111827"))
+            painter.drawText(QRectF(-86, -10, 86, 18), int(Qt.AlignRight | Qt.AlignVCenter), label)
+            painter.restore()
+
+        painter.end()
+
+
 class PLSResultsWidget(QWidget):
     def __init__(
         self,
@@ -668,6 +856,8 @@ class PLSResultsWidget(QWidget):
         self.builder = builder or build_views
         self.default_key = default_key
         self.current_key = default_key
+        self.current_subtabs: dict[str, str] = {}
+        self._active_view: ResultView | None = None
         self._link_labels: dict[str, QLabel] = {}
         self._category_headers: dict[str, QLabel] = {}
         self._init_ui()
@@ -700,24 +890,17 @@ class PLSResultsWidget(QWidget):
         header.addWidget(self.copy_r_button)
         root.addLayout(header)
 
-        tab_row = QHBoxLayout()
-        self.matrix_tab = QLabel()
-        self.matrix_tab.setObjectName("MatrixTab")
-        self.matrix_tab.setText(f'<img/>  {_t("matrix", self.lang)}')
-        self.matrix_tab.setPixmap(icon("matrix", 18).pixmap(16, 16))
-        self.matrix_tab_text = QLabel(_t("matrix", self.lang))
-        self.matrix_tab_text.setObjectName("MatrixTabText")
-        tab_holder = QFrame()
-        tab_holder.setObjectName("MatrixTabHolder")
-        holder_layout = QHBoxLayout(tab_holder)
-        holder_layout.setContentsMargins(10, 4, 14, 4)
-        holder_layout.setSpacing(6)
-        holder_layout.addWidget(self.matrix_tab)
-        holder_layout.addWidget(self.matrix_tab_text)
-        tab_row.addWidget(tab_holder)
-        tab_row.addStretch()
-        root.addLayout(tab_row)
+        self.result_tab_bar = QFrame()
+        self.result_tab_bar.setObjectName("ResultSubtabBar")
+        self.result_tab_row = QHBoxLayout(self.result_tab_bar)
+        self.result_tab_row.setContentsMargins(0, 0, 0, 0)
+        self.result_tab_row.setSpacing(0)
+        self.result_tab_group = QButtonGroup(self)
+        self.result_tab_group.setExclusive(True)
+        self.result_tab_buttons: dict[str, QPushButton] = {}
+        root.addWidget(self.result_tab_bar)
 
+        self.content_stack = QStackedWidget()
         self.table = QTableView()
         self.table.setObjectName("ResultTable")
         self._source_model: ResultTableModel | None = None
@@ -728,10 +911,22 @@ class PLSResultsWidget(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setWordWrap(False)
         self.table.setShowGrid(True)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.table.horizontalHeader().setHighlightSections(False)
         self.table.verticalHeader().setHighlightSections(False)
         self.table.horizontalHeader().setSectionsClickable(True)
-        root.addWidget(self.table, 1)
+        self.content_stack.addWidget(self.table)
+
+        self.chart_scroll = QScrollArea()
+        self.chart_scroll.setObjectName("HistScroll")
+        self.chart_scroll.setWidgetResizable(True)
+        self.chart_scroll.setFrameShape(QFrame.NoFrame)
+        self.content_stack.addWidget(self.chart_scroll)
+        root.addWidget(self.content_stack, 1)
 
         self.empty_label = QLabel(_t("empty", self.lang))
         self.empty_label.setObjectName("EmptyResult")
@@ -779,21 +974,20 @@ class PLSResultsWidget(QWidget):
 
     def _show_empty(self, empty: bool) -> None:
         self.empty_label.setVisible(empty)
-        self.table.setVisible(not empty)
+        self.content_stack.setVisible(not empty)
         self.title_label.setVisible(not empty)
         self.copy_label.setVisible(not empty)
         self.copy_excel_button.setVisible(not empty)
         self.copy_r_button.setVisible(not empty)
         self.nav_panel.setVisible(not empty)
-        if hasattr(self, "matrix_tab"):
-            self.matrix_tab.parentWidget().setVisible(not empty)
+        self.result_tab_bar.setVisible(not empty)
 
     def load_results(self, results: dict[str, Any]) -> None:
         self.results = results
         self.views = self.builder(results)
-        if self.current_key not in self.views or self.views[self.current_key].frame is None:
+        if self.current_key not in self.views or not self.views[self.current_key].available():
             self.current_key = next(
-                (key for key, _c, _e, _v in self.specs if self.views.get(key) and self.views[key].frame is not None),
+                (key for key, _c, _e, _v in self.specs if self.views.get(key) and self.views[key].available()),
                 self.default_key,
             )
         self._refresh_links()
@@ -804,17 +998,86 @@ class PLSResultsWidget(QWidget):
         if key not in self.spec_by_key:
             return
         self.current_key = key
+        self._active_view = None
         self.title_label.setText(self._name(key))
         self._refresh_links()
         view = self.views.get(key)
-        if view is None or view.frame is None:
+        self._refresh_result_tabs(view)
+        active = self._current_result_view(view)
+        if active is None or not active.available():
             frame = pd.DataFrame({"": [_t("not_available", self.lang)]})
             self._render(ResultView(frame, show_index=False))
             return
-        self._render(view)
+        self._active_view = active
+        if active.chart:
+            self._render_chart(active)
+        else:
+            self._render(active)
+
+    def _result_tabs(self, view: ResultView | None) -> list[tuple[str, str, ResultView]]:
+        if view is None:
+            return []
+        if view.tabs:
+            return view.tabs
+        return [("matrix", _t("matrix", self.lang), view)]
+
+    def _refresh_result_tabs(self, view: ResultView | None) -> None:
+        while self.result_tab_row.count():
+            item = self.result_tab_row.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                self.result_tab_group.removeButton(widget)
+                widget.setParent(None)
+                widget.deleteLater()
+        self.result_tab_buttons = {}
+        self.result_tab_group.setParent(None)
+        self.result_tab_group.deleteLater()
+
+        tabs = self._result_tabs(view)
+        if not tabs:
+            self.result_tab_group = QButtonGroup(self)
+            self.result_tab_group.setExclusive(True)
+            self.result_tab_bar.hide()
+            return
+        active_key = self.current_subtabs.get(self.current_key)
+        if active_key not in {tab_key for tab_key, _label, _view in tabs}:
+            active_key = next((tab_key for tab_key, _label, tab_view in tabs if tab_view.available()), tabs[0][0])
+            self.current_subtabs[self.current_key] = active_key
+
+        self.result_tab_group = QButtonGroup(self)
+        self.result_tab_group.setExclusive(True)
+        for tab_key, label, tab_view in tabs:
+            button = QPushButton(label)
+            button.setObjectName("ResultSubtab")
+            button.setCheckable(True)
+            button.setEnabled(tab_view.available())
+            button.setIcon(icon("analysis" if tab_view.chart else "matrix", 18))
+            button.setCursor(Qt.PointingHandCursor)
+            button.setChecked(tab_key == active_key)
+            button.clicked.connect(lambda _checked=False, sub=tab_key: self._on_result_subtab(sub))
+            self.result_tab_group.addButton(button)
+            self.result_tab_buttons[tab_key] = button
+            self.result_tab_row.addWidget(button)
+        self.result_tab_row.addStretch()
+        self.result_tab_bar.show()
+
+    def _current_result_view(self, view: ResultView | None) -> ResultView | None:
+        tabs = self._result_tabs(view)
+        if not tabs:
+            return None
+        active_key = self.current_subtabs.get(self.current_key, tabs[0][0])
+        for tab_key, _label, tab_view in tabs:
+            if tab_key == active_key:
+                return tab_view
+        return tabs[0][2]
+
+    def _on_result_subtab(self, sub_id: str) -> None:
+        self.current_subtabs[self.current_key] = sub_id
+        self.show_result(self.current_key)
 
     # -- rendering ----------------------------------------------------------
     def _render(self, view: ResultView) -> None:
+        self.content_stack.setCurrentIndex(0)
         frame = view.frame
         rows, cols = frame.shape
         column_labels = [str(column) for column in frame.columns]
@@ -824,9 +1087,9 @@ class PLSResultsWidget(QWidget):
         self.table.setModel(self._proxy_model)
         self.table.verticalHeader().setVisible(view.show_index)
         header = self.table.horizontalHeader()
-        # Every column is drag-resizable (Interactive); the last one stretches so
-        # the table still fills the available width on load.
-        header.setStretchLastSection(True)
+        # Every column is drag-resizable (Interactive); wide SmartPLS-style
+        # matrices should use horizontal scrolling instead of forced stretch.
+        header.setStretchLastSection(False)
         header.setMinimumSectionSize(56)
         header.setDefaultSectionSize(120)
         for column in range(cols):
@@ -842,8 +1105,21 @@ class PLSResultsWidget(QWidget):
                 lo, hi = 96, 240
             width = self.table.columnWidth(column)
             self.table.setColumnWidth(column, min(max(width, lo), hi))
-        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.table.verticalHeader().setDefaultSectionSize(24)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.verticalHeader().setDefaultSectionSize(28)
+
+    def _render_chart(self, view: ResultView) -> None:
+        self.content_stack.setCurrentIndex(1)
+        old = self.chart_scroll.widget()
+        if old is not None:
+            old.setParent(None)
+            old.deleteLater()
+        if view.chart == "htmt":
+            self.chart_scroll.setWidget(HTMTChart(view.frame))
+        else:
+            placeholder = QLabel(_t("not_available", self.lang))
+            placeholder.setAlignment(Qt.AlignCenter)
+            self.chart_scroll.setWidget(placeholder)
 
     def _format(self, value: Any) -> str:
         if value is None:
@@ -866,7 +1142,7 @@ class PLSResultsWidget(QWidget):
             item.setForeground(color)
 
     def _foreground(self, mode: str | None, value: Any, col_label: str = "") -> QColor | None:
-        if mode not in {"loading", "bootstrap", "predict", "mga"}:
+        if mode not in {"loading", "cross_loading", "bootstrap", "predict", "mga", "reliability", "vif", "htmt"}:
             return None
         try:
             number = float(value)
@@ -874,8 +1150,26 @@ class PLSResultsWidget(QWidget):
             return None
         if np.isnan(number):
             return None
-        if mode == "loading":
+        if mode in {"loading", "cross_loading"}:
             return LOAD_GOOD if abs(number) >= LOADING_THRESHOLD else LOAD_BAD
+        if mode == "reliability":
+            if col_label == "Average Variance Extracted (AVE)":
+                return LOAD_GOOD if number >= AVE_THRESHOLD else LOAD_BAD
+            if col_label in {"Cronbach's Alpha", "rho_A", "Composite Reliability"}:
+                return LOAD_GOOD if number >= RELIABILITY_MIN else LOAD_BAD
+            return None
+        if mode == "vif":
+            if number <= VIF_GREEN_MAX:
+                return LOAD_GOOD
+            if number >= VIF_RED_MIN:
+                return LOAD_BAD
+            return None
+        if mode == "htmt":
+            if number < HTMT_GREEN_MAX:
+                return LOAD_GOOD
+            if number >= HTMT_RED_MIN:
+                return LOAD_BAD
+            return None
         if mode == "predict":
             if col_label.startswith("Q²"):
                 return LOAD_GOOD if number >= 0 else LOAD_BAD
@@ -900,7 +1194,7 @@ class PLSResultsWidget(QWidget):
         for key, label in self._link_labels.items():
             name = self._name(key)
             view = self.views.get(key)
-            available = bool(view and view.frame is not None)
+            available = bool(view and view.available())
             active = key == self.current_key and self.results is not None
             if active:
                 color = "#0b3d91"
@@ -934,7 +1228,7 @@ class PLSResultsWidget(QWidget):
 
     # -- clipboard / export -------------------------------------------------
     def _current_frame(self) -> pd.DataFrame | None:
-        view = self.views.get(self.current_key)
+        view = self._active_view or self._current_result_view(self.views.get(self.current_key))
         return view.frame if view else None
 
     def copy_excel(self) -> None:
@@ -962,7 +1256,11 @@ class PLSResultsWidget(QWidget):
         frames: dict[str, pd.DataFrame] = {}
         for key, _cat, en, _vi in self.specs:
             view = self.views.get(key)
-            if view and view.frame is not None:
+            if view and view.tabs:
+                for _tab_key, label, tab_view in view.tabs:
+                    if tab_view.frame is not None:
+                        frames[f"{en} - {label}"] = tab_view.frame
+            elif view and view.frame is not None:
                 frames[en] = view.frame
         return frames
 
@@ -993,7 +1291,6 @@ class PLSResultsWidget(QWidget):
         self.copy_label.setText(_t("copy_to_clipboard", lang))
         self.copy_excel_button.setText(_t("excel_format", lang))
         self.copy_r_button.setText(_t("r_format", lang))
-        self.matrix_tab_text.setText(_t("matrix", lang))
         self.empty_label.setText(_t("empty", lang))
         for category, header in self._category_headers.items():
             header.setText(_t(f"cat_{category}", lang))
@@ -1255,8 +1552,8 @@ class BootstrapResultsWidget(QWidget):
             min_width, max_width = self._column_width_bounds(label, is_samples_table)
             width = self.table.columnWidth(column)
             self.table.setColumnWidth(column, min(max(width, min_width), max_width))
-        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.table.verticalHeader().setDefaultSectionSize(24)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.verticalHeader().setDefaultSectionSize(28)
 
     def _column_width_bounds(self, label: str, is_samples_table: bool) -> tuple[int, int]:
         if label == "No.":
@@ -1481,16 +1778,15 @@ def fill_table(table: QTableWidget, frame: pd.DataFrame) -> None:
     header = table.horizontalHeader()
     header.setSectionsClickable(True)
     header.setStretchLastSection(False)
-    if display.shape[1] <= 8:
-        for column in range(display.shape[1]):
-            header.setSectionResizeMode(column, QHeaderView.Stretch)
-    else:
-        for column in range(display.shape[1]):
-            header.setSectionResizeMode(column, QHeaderView.Interactive)
-        table.resizeColumnsToContents()
-        for column in range(display.shape[1]):
-            table.setColumnWidth(column, min(max(table.columnWidth(column), 84), 220))
-    table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+    header.setMinimumSectionSize(56)
+    header.setDefaultSectionSize(112)
+    for column in range(display.shape[1]):
+        header.setSectionResizeMode(column, QHeaderView.Interactive)
+    table.resizeColumnsToContents()
+    for column in range(display.shape[1]):
+        table.setColumnWidth(column, min(max(table.columnWidth(column), 84), 240))
+    table.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
+    table.verticalHeader().setDefaultSectionSize(28)
     table.setSortingEnabled(True)
     if previous_sort:
         table.sortItems(header.sortIndicatorSection(), header.sortIndicatorOrder())
