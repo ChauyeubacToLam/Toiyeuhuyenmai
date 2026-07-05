@@ -522,6 +522,7 @@ class MainWindow(QMainWindow):
         self._action_state_timer.timeout.connect(self._update_action_state)
         self.canvas_view.scene.selectionChanged.connect(self._action_state_timer.start)
         self.canvas_view.scene.selectionChanged.connect(self._update_style_controls_enabled)
+        self.canvas_view.workspace_swipe_requested.connect(self._switch_workspace_by_gesture)
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
     def _build_menus(self) -> None:
@@ -1334,6 +1335,16 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_style_opacity"):
             self._style_opacity.setOpacity(1.0 if has_selection else 0.4)
 
+    def _switch_workspace_by_gesture(self, direction: int) -> None:
+        if direction == 0 or self._workspace_transition_overlay is not None:
+            return
+        pages = [1, 2, 3]
+        current = self.tabs.currentIndex()
+        if current not in pages:
+            return
+        next_index = pages[(pages.index(current) + (1 if direction > 0 else -1)) % len(pages)]
+        self._show_workspace_tab(next_index)
+
     def _show_workspace_tab(self, index: int) -> None:
         self.tabs.setTabVisible(0, index == 0)
         self.tabs.tabBar().setVisible(index != 0)
@@ -1773,7 +1784,22 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, title, f"{title} is visible for SmartPLS-compatible workflow planning. The current engine does not calculate this method yet.")
 
     def show_quick_guide(self) -> None:
-        QMessageBox.information(self, "Quick Start Guide", "1. Create a project\n2. Import a data file\n3. Create a path model\n4. Drag indicators to the model\n5. Connect constructs\n6. Run PLS Algorithm")
+        QMessageBox.information(
+            self,
+            "Quick Start Guide",
+            "1. Create a project\n"
+            "2. Import a data file\n"
+            "3. Create a path model\n"
+            "4. Drag indicators to the model\n"
+            "5. Connect constructs\n"
+            "6. Run PLS Algorithm\n\n"
+            "Trackpad on Path Model:\n"
+            "- Two-finger scroll pans the canvas\n"
+            "- Pinch zooms under the pointer\n"
+            "- Smart zoom / double-click empty canvas toggles fit and 100%\n"
+            "- Horizontal swipe switches Data, Path Model and Results\n"
+            "- Vertical swipe up fits the model; down resets zoom",
+        )
 
     def show_about(self) -> None:
         QMessageBox.about(self, "About PySmartPLS", "PySmartPLS\nVisual PLS-SEM workbench built with Python and PySide6.")

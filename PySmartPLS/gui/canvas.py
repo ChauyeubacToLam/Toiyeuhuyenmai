@@ -4,7 +4,7 @@ import math
 import uuid
 from typing import Any
 
-from PySide6.QtCore import QEvent, QSignalBlocker, QPointF, QRectF, Qt, QLineF, QTimer
+from PySide6.QtCore import QEvent, QSignalBlocker, QPointF, QRectF, Qt, QLineF, QTimer, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF, QTextOption, QTransform
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QMenu,
     QMessageBox,
+    QSwipeGesture,
 )
 from gui.icons import icon
 from gui import theme as ui_theme
@@ -1091,6 +1092,8 @@ class ModelCanvasScene(QGraphicsScene):
 
 
 class ModelCanvasView(QGraphicsView):
+    workspace_swipe_requested = Signal(int)
+
     def __init__(self):
         super().__init__()
         self.scene = ModelCanvasScene(self)
@@ -1103,6 +1106,10 @@ class ModelCanvasView(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setBackgroundBrush(QBrush(QColor("#ffffff")))
         self.grabGesture(Qt.PinchGesture)
+        self.grabGesture(Qt.SwipeGesture)
+        self.viewport().grabGesture(Qt.PinchGesture)
+        self.viewport().grabGesture(Qt.SwipeGesture)
+        self.viewport().installEventFilter(self)
         self._zoom_factor = 1.0
         self._min_zoom = 0.2
         self._max_zoom = 5.0
@@ -1145,34 +1152,148 @@ class ModelCanvasView(QGraphicsView):
         self.scale(applied, applied)
         self._zoom_factor = target
 
-    def wheelEvent(self, event) -> None:
-        delta = event.angleDelta().y()
-        if delta == 0:
-            delta = event.pixelDelta().y()
-        if delta == 0:
-            event.ignore()
+    def smart_zoom(self) -> None:
+        if not self.scene.has_model_nodes():
+            self.reset_zoom()
             return
-        factor = 1.15 ** (delta / 120.0) if event.angleDelta().y() else 1.0015 ** delta
-        self._zoom_by(factor)
-        event.accept()
+        if abs(self._zoom_factor - 1.0) > 0.08:
+            self.reset_zoom()
+        else:
+            self.fit_model()
+
+    def _pan_view_by(self, dx: float, dy: float) -> bool:
+        if abs(dx) < 0.01 and abs(dy) < 0.01:
+            return False
+        horizontal = self.horizontalScrollBar()
+        vertical = self.verticalScrollBar()
+        horizontal.setValue(horizontal.value() - round(dx))
+        vertical.setValue(vertical.value() - round(dy))
+        return True
+
+    def wheelEvent(self, event) -> None:
+        pixel_delta = event.pixelDelta()
+        angle_delta = event.angleDelta()
+        modifiers = event.modifiers()
+        wants_zoom = bool(modifiers & (Qt.ControlModifier | Qt.MetaModifier))
+
+        if wants_zoom:
+            delta = angle_delta.y() or pixel_delta.y()
+            if delta == 0:
+                event.ignore()
+                return
+            factor = 1.15 ** (delta / 120.0) if angle_delta.y() else 1.0015 ** delta
+            self._zoom_by(factor)
+            event.accept()
+            return
+
+        if not pixel_delta.isNull():
+            dx, dy = float(pixel_delta.x()), float(pixel_delta.y())
+        else:
+            dx, dy = float(angle_delta.x()) * 0.5, float(angle_delta.y()) * 0.5
+        if modifiers & Qt.ShiftModifier and abs(dx) < 0.01:
+            dx, dy = dy, 0.0
+        if self._pan_view_by(dx, dy):
+            event.accept()
+        else:
+            event.ignore()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        item = self.itemAt(event.position().toPoint())
+        if event.button() == Qt.LeftButton and item is None:
+            self.smart_zoom()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self.viewport() and self._handle_trackpad_event(event):
+            return True
+        return super().eventFilter(watched, event)
 
     def event(self, event) -> bool:
+        if self._handle_trackpad_event(event):
+            return True
+        return super().event(event)
+
+    def _handle_trackpad_event(self, event) -> bool:
         if event.type() == QEvent.Gesture:
             gesture = event.gesture(Qt.PinchGesture)
             if gesture is not None:
-                factor = float(gesture.scaleFactor())
+                scale = float(gesture.scaleFactor())
+                last_scale = float(gesture.lastScaleFactor() or 1.0)
+                factor = scale / last_scale if last_scale > 0 else scale
                 if factor > 0:
                     self._zoom_by(factor)
+                    event.accept()
+                    return True
+            swipe = event.gesture(Qt.SwipeGesture)
+            if swipe is not None:
+                horizontal = getattr(swipe, "horizontalDirection", lambda: None)()
+                vertical = getattr(swipe, "verticalDirection", lambda: None)()
+                if horizontal == QSwipeGesture.SwipeDirection.Left:
+                    self.workspace_swipe_requested.emit(1)
+                    event.accept()
+                    return True
+                if horizontal == QSwipeGesture.SwipeDirection.Right:
+                    self.workspace_swipe_requested.emit(-1)
+                    event.accept()
+                    return True
+                if vertical == QSwipeGesture.SwipeDirection.Up:
+                    self.fit_model()
+                    event.accept()
+                    return True
+                if vertical == QSwipeGesture.SwipeDirection.Down:
+                    self.reset_zoom()
                     event.accept()
                     return True
         if event.type() == QEvent.NativeGesture:
             gesture_type = getattr(event, "gestureType", lambda: None)()
             if gesture_type == Qt.NativeGestureType.ZoomNativeGesture:
                 value = float(getattr(event, "value", lambda: 0.0)())
-                self._zoom_by(1.0 + value)
+                factor = 1.0 + value
+                if factor > 0:
+                    self._zoom_by(factor)
+                    event.accept()
+                    return True
+            if gesture_type == Qt.NativeGestureType.PanNativeGesture:
+                delta = self._native_delta(event)
+                if self._pan_view_by(delta.x(), delta.y()):
+                    event.accept()
+                    return True
+            if gesture_type == Qt.NativeGestureType.SmartZoomNativeGesture:
+                self.smart_zoom()
                 event.accept()
                 return True
-        return super().event(event)
+            if gesture_type == Qt.NativeGestureType.SwipeNativeGesture:
+                if self._handle_native_swipe(event):
+                    event.accept()
+                    return True
+        return False
+
+    def _native_delta(self, event) -> QPointF:
+        delta_getter = getattr(event, "delta", None)
+        if callable(delta_getter):
+            delta = delta_getter()
+            if delta is not None:
+                return QPointF(float(delta.x()), float(delta.y()))
+        value_getter = getattr(event, "value", None)
+        if callable(value_getter):
+            return QPointF(float(value_getter()), 0.0)
+        return QPointF()
+
+    def _handle_native_swipe(self, event) -> bool:
+        delta = self._native_delta(event)
+        dx, dy = delta.x(), delta.y()
+        if abs(dx) >= abs(dy) and abs(dx) > 0.01:
+            self.workspace_swipe_requested.emit(1 if dx < 0 else -1)
+            return True
+        if abs(dy) > 0.01:
+            if dy < 0:
+                self.fit_model()
+            else:
+                self.reset_zoom()
+            return True
+        return False
 
     def delete_selected(self) -> None:
         selected = list(self.scene.selectedItems())

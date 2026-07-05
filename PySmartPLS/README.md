@@ -39,7 +39,7 @@ If macOS blocks a packaged `.app`, open **System Settings > Privacy & Security**
 - Project workspace: new/open/save `.plsproj`, export/import backup `.zip`.
 - Data import: CSV, TXT, XLS, XLSX, SAV.
 - Data view: preview, descriptive statistics, missing-value warnings, non-numeric warnings, scale hints, cleaned-data export.
-- Model canvas: latent constructs, indicators, directed paths, comments, drag/drop indicators, context menu rename/delete/reflective-formative, zoom, image export.
+- Model canvas: latent constructs, indicators, directed paths, comments, drag/drop indicators, context menu rename/delete/reflective-formative, zoom, macOS-style trackpad gestures, image export.
 - Model checker: missing indicators, unknown constructs, duplicate assignments, directed-cycle prevention.
 - Analysis engine: PLS-SEM algorithm, Mode A reflective, Mode B formative, path/factor/centroid weighting, sum scores/OLS.
 - Results: path coefficients, R2, adjusted R2, f2, inner VIF, outer loadings/weights, Cronbach alpha, rho_A approximation, composite reliability, AVE, Fornell-Larcker, HTMT, cross-loadings, total/indirect effects, approximate SRMR.
