@@ -4,7 +4,7 @@ import math
 import uuid
 from typing import Any
 
-from PySide6.QtCore import QEvent, QSignalBlocker, QPointF, QRectF, Qt, QLineF, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QSignalBlocker, QPointF, QRectF, Qt, QLineF, QTimer, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF, QTextOption, QTransform
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -1113,6 +1113,13 @@ class ModelCanvasView(QGraphicsView):
         self._zoom_factor = 1.0
         self._min_zoom = 0.2
         self._max_zoom = 5.0
+        # macOS/Windows precision trackpads deliver QNativeGestureEvents; the Qt
+        # gesture framework (grabGesture) ALSO synthesises QPinch/QSwipe from the
+        # same physical gesture, so acting on both doubles every zoom/swipe. Once we
+        # see a native gesture we know this platform has them and ignore the
+        # synthesised duplicates. Stays False on platforms without native gestures
+        # (e.g. Linux/X11), where the gesture framework is the only path.
+        self._native_gesture_seen = False
         self._undo_stack: list[dict[str, Any]] = []
         self._redo_stack: list[dict[str, Any]] = []
         self._clipboard_model: dict[str, Any] = {"nodes": [], "connections": []}
@@ -1142,14 +1149,26 @@ class ModelCanvasView(QGraphicsView):
     def _sync_zoom_factor(self) -> None:
         self._zoom_factor = max(self._min_zoom, min(self._max_zoom, float(self.transform().m11() or 1.0)))
 
-    def _zoom_by(self, factor: float) -> None:
+    def _zoom_by(self, factor: float, anchor: QPoint | None = None) -> None:
         if factor <= 0:
             return
         target = max(self._min_zoom, min(self._max_zoom, self._zoom_factor * factor))
         applied = target / self._zoom_factor if self._zoom_factor else target
         if abs(applied - 1.0) < 0.001:
             return
-        self.scale(applied, applied)
+        if anchor is not None:
+            # Keep the scene point under the pinch centre fixed, so zooming feels
+            # anchored to the fingers like native macOS apps (Preview, Maps).
+            previous = self.transformationAnchor()
+            self.setTransformationAnchor(QGraphicsView.NoAnchor)
+            before = self.mapToScene(anchor)
+            self.scale(applied, applied)
+            after = self.mapToScene(anchor)
+            shift = after - before
+            self.translate(shift.x(), shift.y())
+            self.setTransformationAnchor(previous)
+        else:
+            self.scale(applied, applied)
         self._zoom_factor = target
 
     def smart_zoom(self) -> None:
@@ -1217,11 +1236,17 @@ class ModelCanvasView(QGraphicsView):
 
     def _handle_trackpad_event(self, event) -> bool:
         if event.type() == QEvent.Gesture:
+            # On macOS/Windows the same pinch/swipe already arrived as a native
+            # gesture and was handled below; acting again here would double it.
+            if self._native_gesture_seen:
+                return False
             gesture = event.gesture(Qt.PinchGesture)
             if gesture is not None:
-                scale = float(gesture.scaleFactor())
-                last_scale = float(gesture.lastScaleFactor() or 1.0)
-                factor = scale / last_scale if last_scale > 0 else scale
+                # scaleFactor() is already the incremental change since the last
+                # update, so use it directly (dividing by lastScaleFactor() left it
+                # stuck near 1.0 and the canvas barely zoomed).
+                factor = float(gesture.scaleFactor() or 1.0)
+                factor = max(0.5, min(2.0, factor))
                 if factor > 0:
                     self._zoom_by(factor)
                     event.accept()
@@ -1247,12 +1272,13 @@ class ModelCanvasView(QGraphicsView):
                     event.accept()
                     return True
         if event.type() == QEvent.NativeGesture:
+            self._native_gesture_seen = True
             gesture_type = getattr(event, "gestureType", lambda: None)()
             if gesture_type == Qt.NativeGestureType.ZoomNativeGesture:
                 value = float(getattr(event, "value", lambda: 0.0)())
-                factor = 1.0 + value
+                factor = max(0.5, min(2.0, 1.0 + value))
                 if factor > 0:
-                    self._zoom_by(factor)
+                    self._zoom_by(factor, self._gesture_pos(event))
                     event.accept()
                     return True
             if gesture_type == Qt.NativeGestureType.PanNativeGesture:
@@ -1269,6 +1295,18 @@ class ModelCanvasView(QGraphicsView):
                     event.accept()
                     return True
         return False
+
+    def _gesture_pos(self, event) -> QPoint | None:
+        """Viewport-local point under a native gesture, for anchored zooming."""
+        getter = getattr(event, "position", None)  # Qt6 QNativeGestureEvent
+        if callable(getter):
+            point = getter()
+            to_point = getattr(point, "toPoint", None)
+            return to_point() if callable(to_point) else QPoint(int(point.x()), int(point.y()))
+        getter = getattr(event, "pos", None)
+        if callable(getter):
+            return getter()
+        return None
 
     def _native_delta(self, event) -> QPointF:
         delta_getter = getattr(event, "delta", None)
