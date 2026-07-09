@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import sys
 import uuid
 from typing import Any
 
@@ -34,6 +35,10 @@ INDICATOR_WIDTH = 112.0
 INDICATOR_HEIGHT = 36.0
 INDICATOR_GAP = 14.0
 CONSTRUCT_INDICATOR_GAP = 40.0
+
+
+def _canvas_font_size(base_size: int) -> int:
+    return base_size + 5 if sys.platform == "darwin" else base_size
 
 
 def _round_rect_path(rect: QRectF, radius: float) -> QPainterPath:
@@ -77,7 +82,9 @@ class ConnectionLine(QGraphicsLineItem):
         if not self.result_badge:
             return
         try:
-            if self.result_badge.scene() is None:
+            badge_scene = self.result_badge.scene()
+            line_scene = self.scene()
+            if badge_scene is not None and line_scene is not None and badge_scene is not line_scene:
                 self.result_badge = None
                 return
         except RuntimeError:
@@ -391,7 +398,7 @@ class LatentNode(BaseNode):
         self.ellipse.setZValue(0)
         self.ellipse.setGraphicsEffect(_node_shadow())
         self.text.setDefaultTextColor(QColor(NODE_PALETTE["text"]))
-        self.text.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
+        self.text.setFont(QFont("Segoe UI", _canvas_font_size(10), QFont.Weight.DemiBold))
         option = QTextOption(Qt.AlignHCenter)
         self.text.document().setDefaultTextOption(option)
         self.apply_style()
@@ -534,7 +541,7 @@ class IndicatorNode(BaseNode):
         self.rect_item = QGraphicsPathItem(_round_rect_path(self._rect, 7), self)
         self.rect_item.setZValue(0)
         self.rect_item.setGraphicsEffect(_node_shadow(blur=12, dy=2, alpha=45))
-        self.text.setFont(QFont("Segoe UI", 9, QFont.Weight.Medium))
+        self.text.setFont(QFont("Segoe UI", _canvas_font_size(9), QFont.Weight.Medium))
         option = QTextOption(Qt.AlignCenter)
         self.text.document().setDefaultTextOption(option)
         self.apply_style()
@@ -582,7 +589,7 @@ class CommentNode(BaseNode):
         self.rect_item.setBrush(QBrush(QColor("#fff7c7")))
         self.rect_item.setPen(QPen(QColor("#c5a83b"), 1.1, Qt.DashLine))
         self.text.setDefaultTextColor(QColor("#4d4528"))
-        self.text.setFont(QFont("Segoe UI", 9))
+        self.text.setFont(QFont("Segoe UI", _canvas_font_size(9)))
         self.update_text_pos()
 
     def update_text_pos(self) -> None:
@@ -985,9 +992,9 @@ class ModelCanvasScene(QGraphicsScene):
             if text:
                 badge = ResultBadge(text, mid.x(), mid.y(), kind=kind, good=good)
                 item.result_badge = badge
+                self.addItem(badge)
                 item.update_result_badge_position()
                 self.result_badges.append(badge)
-                self.addItem(badge)
 
         if r_square is not None:
             for item in self.items():
