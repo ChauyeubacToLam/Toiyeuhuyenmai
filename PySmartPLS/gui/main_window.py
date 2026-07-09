@@ -82,7 +82,7 @@ class IndicatorTableWidget(QTableWidget):
     def mimeData(self, items):
         mime_data = super().mimeData(items)
         rows = sorted({item.row() for item in items})
-        names = [self.item(row, 1).text() for row in rows if self.item(row, 1)]
+        names = [self.item(row, 0).text() for row in rows if self.item(row, 0)]
         mime_data.setText(",".join(names))
         return mime_data
 
@@ -882,17 +882,17 @@ class MainWindow(QMainWindow):
 
         self.indicator_list = IndicatorTableWidget()
         self.indicator_list.setObjectName("IndicatorList")
-        self.indicator_list.setColumnCount(2)
-        self.indicator_list.setHorizontalHeaderLabels(["No.", "Indicator"])
+        self.indicator_list.setColumnCount(1)
+        self.indicator_list.setHorizontalHeaderLabels(["Indicator"])
         indicator_header = self.indicator_list.horizontalHeader()
-        indicator_header.setMinimumSectionSize(42)
-        indicator_header.setSectionResizeMode(0, QHeaderView.Fixed)
-        indicator_header.setSectionResizeMode(1, QHeaderView.Interactive)
-        self.indicator_list.setColumnWidth(0, 74 if sys.platform == "darwin" else 58)
-        self.indicator_list.setColumnWidth(1, 150)
-        self.indicator_list.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.indicator_list.verticalHeader().setDefaultSectionSize(32 if sys.platform == "darwin" else 28)
-        self.indicator_list.verticalHeader().hide()
+        indicator_header.setMinimumSectionSize(120)
+        indicator_header.setSectionResizeMode(0, QHeaderView.Stretch)
+        indicator_row_header = self.indicator_list.verticalHeader()
+        indicator_row_header.setSectionResizeMode(QHeaderView.Fixed)
+        indicator_row_header.setDefaultSectionSize(32 if sys.platform == "darwin" else 28)
+        indicator_row_header.setDefaultAlignment(Qt.AlignCenter)
+        indicator_row_header.setFixedWidth(58 if sys.platform == "darwin" else 44)
+        indicator_row_header.show()
         self.indicator_list.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.indicator_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.indicator_list.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -1878,7 +1878,7 @@ class MainWindow(QMainWindow):
     def apply_indicator_filter(self, mode: str) -> None:
         used = set(self.canvas_view.used_indicators())
         for row in range(self.indicator_list.rowCount()):
-            item = self.indicator_list.item(row, 1)
+            item = self.indicator_list.item(row, 0)
             is_used = bool(item and item.text() in used)
             self.indicator_list.setRowHidden(row, (mode == "used" and not is_used) or (mode == "unused" and is_used))
         self.statusBar().showMessage({"all": "Showing all indicators", "used": "Showing used indicators", "unused": "Showing unused indicators"}[mode])
@@ -2218,17 +2218,15 @@ class MainWindow(QMainWindow):
     def _populate_indicators(self, columns) -> None:
         names = [normalize_column_name(column) for column in columns]
         self.indicator_list.setRowCount(len(names))
+        self.indicator_list.setVerticalHeaderLabels([str(row + 1) for row in range(len(names))])
         for row, name in enumerate(names):
-            number = QTableWidgetItem(str(row + 1))
-            number.setTextAlignment(Qt.AlignCenter)
             indicator = QTableWidgetItem(name)
-            self.indicator_list.setItem(row, 0, number)
-            self.indicator_list.setItem(row, 1, indicator)
+            self.indicator_list.setItem(row, 0, indicator)
 
     def filter_indicators(self, text: str) -> None:
         text = text.strip().lower()
         for row in range(self.indicator_list.rowCount()):
-            item = self.indicator_list.item(row, 1)
+            item = self.indicator_list.item(row, 0)
             self.indicator_list.setRowHidden(row, bool(item and text not in item.text().lower()))
 
     def indicator_filter_clear(self) -> None:
